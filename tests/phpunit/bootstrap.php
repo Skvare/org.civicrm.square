@@ -17,6 +17,17 @@ if ($cmsPath && file_exists($cmsPath)) {
   require_once $cmsPath;
 }
 
+// The extension's own CRM_* classes (CiviCRM's classloader loads these in
+// production, from info.xml's <classloader>).
+spl_autoload_register(function (string $class) use ($extensionRoot): void {
+  if (str_starts_with($class, 'CRM_')) {
+    $file = $extensionRoot . '/' . str_replace('_', '/', $class) . '.php';
+    if (is_file($file)) {
+      require_once $file;
+    }
+  }
+});
+
 if (!class_exists('CRM_Core_Payment')) {
 
   /**
@@ -41,9 +52,44 @@ if (!class_exists('CRM_Core_Exception')) {
 
   /**
    * Minimal stand-in for CiviCRM core's exception class.
+   *
+   * With core's constructor signature, whose previous exception is the
+   * fourth argument (not PHP's third).
    */
   class CRM_Core_Exception extends Exception {
+
+    /**
+     * @param string $message
+     * @param int|string $error_code
+     * @param array $errorData
+     * @param \Throwable|null $previous
+     */
+    // phpcs:ignore Drupal.NamingConventions.ValidVariableName.LowerCamelName
+    public function __construct($message = '', $error_code = 0, $errorData = [], $previous = NULL) {
+      parent::__construct((string) $message, is_int($error_code) ? $error_code : 0, $previous);
+    }
+
   }
+}
+if (!class_exists('CRM_Extension_Upgrader_Base')) {
+
+  /**
+   * Minimal stand-in for CiviCRM core's extension upgrader base class.
+   */
+  abstract class CRM_Extension_Upgrader_Base {
+  }
+}
+if (!function_exists('_square_assert_php_version')) {
+
+  /**
+   * Stand-in for square.php's PHP version check, which the upgrader calls.
+   */
+  function _square_assert_php_version(): void {
+  }
+
+}
+if (!class_exists('Civi\\Payment\\Exception\\PaymentProcessorException')) {
+  require_once __DIR__ . '/stubs/PaymentProcessorException.php';
 }
 if (!class_exists('CRM_Square_ExtensionUtil')) {
 
@@ -193,6 +239,13 @@ if (!class_exists('Civi')) {
     public static array $logged = [];
 
     /**
+     * Settings saved during the current test, by name.
+     *
+     * @var array
+     */
+    public static array $settings = [];
+
+    /**
      * @return object
      */
     public static function settings() {
@@ -204,7 +257,15 @@ if (!class_exists('Civi')) {
          * @return mixed
          */
         public function get($name) {
-          return NULL;
+          return Civi::$settings[$name] ?? NULL;
+        }
+
+        /**
+         * @param string $name
+         * @param mixed $value
+         */
+        public function set($name, $value): void {
+          Civi::$settings[$name] = $value;
         }
 
       };

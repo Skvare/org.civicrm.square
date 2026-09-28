@@ -162,8 +162,8 @@ class CRM_Core_Payment_SquareIPN {
     // Guard the check-then-insert dedup below with a lock scoped to this
     // processor+event, so two concurrent deliveries of the same event
     // (Square does redeliver) can't both pass the "no existing row" check.
-    $lock = new CRM_Core_Lock("worker.square.webhook.{$processorId}.{$eventId}", 30);
-    if (!$lock->acquire()) {
+    $lock = $this->acquireDedupeLock("worker.square.webhook.{$processorId}.{$eventId}");
+    if (!$lock) {
       CRM_Core_Payment_SquareDebugLogger::log("Square IPN: could not acquire dedup lock for event '{$eventId}', treating as in-flight duplicate.");
       return TRUE;
     }
@@ -172,13 +172,7 @@ class CRM_Core_Payment_SquareIPN {
       // Deduplicate across every queue state. A replay is never reprocessed
       // here: a row still in 'new' is retried by the scheduled job, and an
       // 'error' row needs someone to look at it first.
-      $existing = PaymentprocessorWebhook::get(FALSE)
-        ->addSelect('id')
-        ->addWhere('payment_processor_id', '=', $processorId)
-        ->addWhere('event_id', '=', (string) $eventId)
-        ->execute()
-        ->first();
-      if ($existing) {
+      if ($this->findQueuedEvent($processorId, (string) $eventId)) {
         CRM_Core_Payment_SquareDebugLogger::log("Square IPN: duplicate event '{$eventId}' already queued, skipping.");
         return TRUE;
       }
@@ -187,14 +181,13 @@ class CRM_Core_Payment_SquareIPN {
       // while processing it below, the scheduled job still retries it. A
       // cron run picking it up concurrently is harmless: recording is
       // idempotent and serialized by CRM_Core_Payment_Square's locks.
-      $newWebhookEvent = PaymentprocessorWebhook::create(FALSE)
-        ->addValue('payment_processor_id', $processorId)
-        ->addValue('trigger', $eventType)
-        ->addValue('identifier', $identifier)
-        ->addValue('event_id', (string) $eventId)
-        ->addValue('data', $this->getData())
-        ->execute()
-        ->first();
+      $newWebhookEvent = $this->createQueueRecord([
+        'payment_processor_id' => $processorId,
+        'trigger' => $eventType,
+        'identifier' => $identifier,
+        'event_id' => (string) $eventId,
+        'data' => $this->getData(),
+      ]);
     }
     finally {
       $lock->release();
@@ -264,16 +257,74 @@ class CRM_Core_Payment_SquareIPN {
       Civi::log()->error("Square IPN: processQueuedWebhookEvent failed. EventID: {$this->event_id}: " . $e->getMessage());
     }
 
-    $update = PaymentprocessorWebhook::update(FALSE)
-      ->addWhere('id', '=', $webhookEvent['id'])
-      ->addValue('status', $status)
-      ->addValue('message', preg_replace('/^(.{250}).*/su', '$1 ...', $message));
+    $values = [
+      'status' => $status,
+      'message' => preg_replace('/^(.{250}).*/su', '$1 ...', $message),
+    ];
     if ($status === 'success') {
-      $update->addValue('processed_date', 'now');
+      $values['processed_date'] = 'now';
     }
-    $update->execute();
+    $this->updateQueueRecord((int) $webhookEvent['id'], $values);
 
     return $status !== 'error';
+  }
+
+  /**
+   * Take the lock guarding one event's deduplication.
+   *
+   * @param string $name
+   *
+   * @return \CRM_Core_Lock|null
+   *   NULL if another request holds it.
+   */
+  protected function acquireDedupeLock(string $name) {
+    $lock = new CRM_Core_Lock($name, 30);
+    return $lock->acquire() ? $lock : NULL;
+  }
+
+  /**
+   * Find an event already recorded in the webhook queue.
+   *
+   * @param int $processorId
+   * @param string $eventId
+   *
+   * @return array|null
+   */
+  protected function findQueuedEvent(int $processorId, string $eventId): ?array {
+    return PaymentprocessorWebhook::get(FALSE)
+      ->addSelect('id')
+      ->addWhere('payment_processor_id', '=', $processorId)
+      ->addWhere('event_id', '=', $eventId)
+      ->execute()
+      ->first();
+  }
+
+  /**
+   * Record an event in the webhook queue, in its default status 'new'.
+   *
+   * @param array $values
+   *
+   * @return array
+   *   The queue record.
+   */
+  protected function createQueueRecord(array $values): array {
+    return PaymentprocessorWebhook::create(FALSE)
+      ->setValues($values)
+      ->execute()
+      ->first();
+  }
+
+  /**
+   * Update a webhook queue record.
+   *
+   * @param int $id
+   * @param array $values
+   */
+  protected function updateQueueRecord(int $id, array $values): void {
+    PaymentprocessorWebhook::update(FALSE)
+      ->addWhere('id', '=', $id)
+      ->setValues($values)
+      ->execute();
   }
 
   /**

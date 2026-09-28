@@ -15,11 +15,6 @@ use Square\Payments\PaymentsClient;
  */
 class CRM_Core_Payment_Square_ExceptionHandlingTest extends CRM_Core_Payment_Square_SquareUnitTestCase {
 
-  private function processor(): CRM_Core_Payment_Square {
-    $config = $this->processorConfig();
-    return new CRM_Core_Payment_Square('live', $config);
-  }
-
   private function apiException(int $statusCode, array $errors): SquareApiException {
     return new SquareApiException('API request failed', $statusCode, json_encode(['errors' => $errors]));
   }
@@ -33,7 +28,7 @@ class CRM_Core_Payment_Square_ExceptionHandlingTest extends CRM_Core_Payment_Squ
       ],
     ]);
 
-    $result = $this->callMethod($this->processor(), 'squareApiError', [$exception]);
+    $result = (new CRM_Square_Gateway($this->processorConfig()))->apiError($exception);
 
     $this->assertInstanceOf(CRM_Core_Exception::class, $result);
     $this->assertStringContainsString('Square API returned HTTP 400.', $result->getMessage());
@@ -46,7 +41,7 @@ class CRM_Core_Payment_Square_ExceptionHandlingTest extends CRM_Core_Payment_Squ
       ['category' => 'INVALID_REQUEST_ERROR', 'code' => 'ALSO_BAD', 'detail' => 'second problem'],
     ]);
 
-    $message = $this->callMethod($this->processor(), 'squareApiError', [$exception])->getMessage();
+    $message = (new CRM_Square_Gateway($this->processorConfig()))->apiError($exception)->getMessage();
 
     $this->assertStringContainsString('BAD_REQUEST: first problem', $message);
     $this->assertStringContainsString('ALSO_BAD: second problem', $message);
@@ -89,7 +84,7 @@ class CRM_Core_Payment_Square_ExceptionHandlingTest extends CRM_Core_Payment_Squ
    */
   public function testTranslateSquareCardErrorHumanMessages(string $code, string $expectedSubstring): void {
     $error = new Error(['category' => 'PAYMENT_METHOD_ERROR', 'code' => $code]);
-    $message = $this->callMethod($this->processor(), 'translateSquareCardError', [[$error]]);
+    $message = $this->callMethod(new CRM_Square_Customers(new CRM_Square_Gateway($this->processorConfig())), 'translateSquareCardError', [[$error]]);
     $this->assertStringContainsString($expectedSubstring, $message);
   }
 
@@ -110,13 +105,13 @@ class CRM_Core_Payment_Square_ExceptionHandlingTest extends CRM_Core_Payment_Squ
       'code' => 'SOME_NEW_CODE',
       'detail' => 'A brand new failure reason.',
     ]);
-    $message = $this->callMethod($this->processor(), 'translateSquareCardError', [[$error]]);
+    $message = $this->callMethod(new CRM_Square_Customers(new CRM_Square_Gateway($this->processorConfig())), 'translateSquareCardError', [[$error]]);
     $this->assertSame('A brand new failure reason.', $message);
   }
 
   public function testTranslateSquareCardErrorFallsBackToGenericMessageWithNoDetail(): void {
     $error = new Error(['category' => 'PAYMENT_METHOD_ERROR', 'code' => 'SOME_NEW_CODE']);
-    $message = $this->callMethod($this->processor(), 'translateSquareCardError', [[$error]]);
+    $message = $this->callMethod(new CRM_Square_Customers(new CRM_Square_Gateway($this->processorConfig())), 'translateSquareCardError', [[$error]]);
     $this->assertSame('The card could not be processed.', $message);
   }
 

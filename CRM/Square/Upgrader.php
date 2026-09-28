@@ -14,7 +14,7 @@ class CRM_Square_Upgrader extends CRM_Extension_Upgrader_Base {
    */
   public function install(): void {
     _square_assert_php_version();
-    $this->createSquareCustomerMapTable();
+    $this->createSquareCustomerMapTable(TRUE);
   }
 
   /**
@@ -27,9 +27,103 @@ class CRM_Square_Upgrader extends CRM_Extension_Upgrader_Base {
    */
   public function upgrade_1000(): bool {
     _square_assert_php_version();
-    $this->createSquareCustomerMapTable();
+    // Without the unique customer key: upgrade_1001 adds it once it has
+    // checked the backfilled mappings for conflicts.
+    $this->createSquareCustomerMapTable(FALSE);
     $this->backfillSquareCustomerMapFromCustomField();
     return TRUE;
+  }
+
+  /**
+   * Map each Square customer to at most one contact per payment processor.
+   *
+   * Adds a unique (payment_processor_id, square_customer_id) key, so that
+   * one Square customer (and its cards) can never be shared by two CiviCRM
+   * contacts. Existing mappings that already break that rule are never
+   * resolved automatically — which contact a customer belongs to is a
+   * decision for a person — so the upgrade stops and lists them.
+   *
+   * @throws \CRM_Core_Exception
+   *   If existing mappings conflict.
+   */
+  public function upgrade_1001(): bool {
+    _square_assert_php_version();
+    if ($this->hasUniqueCustomerKey()) {
+      return TRUE;
+    }
+    $conflicts = $this->findConflictingCustomerMappings();
+    if ($conflicts) {
+      throw new CRM_Core_Exception(self::describeCustomerMappingConflicts($conflicts));
+    }
+    $this->addUniqueCustomerKey();
+    return TRUE;
+  }
+
+  /**
+   * Explain which customer mappings block upgrade_1001, and how to fix them.
+   *
+   * @param array $conflicts
+   *   Rows with payment_processor_id, square_customer_id and contact_ids
+   *   (comma-separated).
+   *
+   * @return string
+   */
+  public static function describeCustomerMappingConflicts(array $conflicts): string {
+    $lines = [];
+    foreach ($conflicts as $conflict) {
+      $lines[] = sprintf(
+        'payment processor %d, Square customer %s: contacts %s',
+        $conflict['payment_processor_id'],
+        $conflict['square_customer_id'],
+        str_replace(',', ', ', (string) $conflict['contact_ids'])
+      );
+    }
+    return 'Square extension upgrade stopped: ' . count($conflicts) . ' Square customer(s) are mapped to more than one '
+      . 'CiviCRM contact on the same payment processor, so each customer cannot be limited to one contact. For each, '
+      . 'decide which contact the Square customer belongs to (e.g. by its email or reference ID in the Square '
+      . 'Dashboard), delete the other contacts\' rows from square_customer_map, then run the upgrade again. '
+      . implode('; ', $lines) . '.';
+  }
+
+  /**
+   * Whether square_customer_map already has its unique customer key.
+   */
+  protected function hasUniqueCustomerKey(): bool {
+    return CRM_Core_BAO_SchemaHandler::checkIfIndexExists('square_customer_map', 'UI_processor_customer');
+  }
+
+  /**
+   * Square customers mapped to more than one contact on the same processor.
+   *
+   * @return array
+   *   Rows with payment_processor_id, square_customer_id and contact_ids.
+   */
+  protected function findConflictingCustomerMappings(): array {
+    $dao = CRM_Core_DAO::executeQuery(
+      'SELECT payment_processor_id, square_customer_id, GROUP_CONCAT(contact_id ORDER BY contact_id) AS contact_ids
+       FROM square_customer_map
+       GROUP BY payment_processor_id, square_customer_id
+       HAVING COUNT(*) > 1
+       ORDER BY payment_processor_id, square_customer_id'
+    );
+    $conflicts = [];
+    while ($dao->fetch()) {
+      $conflicts[] = [
+        'payment_processor_id' => (int) $dao->payment_processor_id,
+        'square_customer_id' => $dao->square_customer_id,
+        'contact_ids' => $dao->contact_ids,
+      ];
+    }
+    return $conflicts;
+  }
+
+  /**
+   * Add the unique (payment_processor_id, square_customer_id) key.
+   */
+  protected function addUniqueCustomerKey(): void {
+    CRM_Core_DAO::executeQuery(
+      'ALTER TABLE `square_customer_map` ADD UNIQUE KEY `UI_processor_customer` (`payment_processor_id`, `square_customer_id`)'
+    );
   }
 
   /**
@@ -43,8 +137,15 @@ class CRM_Square_Upgrader extends CRM_Extension_Upgrader_Base {
    * Create the square_customer_map table, if it doesn't already exist.
    *
    * Maps (contact_id, payment_processor_id) -> square_customer_id.
+   *
+   * @param bool $uniqueCustomer
+   *   Whether to include the unique (payment_processor_id,
+   *   square_customer_id) key (see upgrade_1001()).
    */
-  protected function createSquareCustomerMapTable(): void {
+  protected function createSquareCustomerMapTable(bool $uniqueCustomer): void {
+    $uniqueCustomerKey = $uniqueCustomer
+      ? 'UNIQUE KEY `UI_processor_customer` (`payment_processor_id`, `square_customer_id`),'
+      : '';
     CRM_Core_DAO::executeQuery(<<<SQL
       CREATE TABLE IF NOT EXISTS `square_customer_map` (
         `id` int unsigned NOT NULL AUTO_INCREMENT,
@@ -54,6 +155,7 @@ class CRM_Square_Upgrader extends CRM_Extension_Upgrader_Base {
         `created_date` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP,
         PRIMARY KEY (`id`),
         UNIQUE KEY `UI_contact_processor` (`contact_id`, `payment_processor_id`),
+        {$uniqueCustomerKey}
         KEY `IDX_square_customer_id` (`square_customer_id`),
         CONSTRAINT `FK_square_customer_map_contact_id` FOREIGN KEY (`contact_id`)
           REFERENCES `civicrm_contact` (`id`) ON DELETE CASCADE ON UPDATE RESTRICT,

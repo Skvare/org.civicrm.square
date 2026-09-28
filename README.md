@@ -24,7 +24,7 @@ just enable the extension as usual (**Administer → System Settings → Extensi
 - One-time card payments via Square Payments API (`/v2/payments`)
 - Recurring contributions via Square Subscriptions API (`/v2/subscriptions`)
 - Refunds via Square Refunds API (`/v2/refunds`)
-- Subscription cancellation synced to Square
+- Subscription cancellation and amount changes synced to Square
 - Square Web Payments SDK for browser-side card tokenization — card details never pass through CiviCRM
 - Card-on-file support through CiviCRM PaymentToken
 - Square customer creation and deduplication (by email and `reference_id`)
@@ -165,7 +165,7 @@ The card element mounts into `#square-card-container`. Tokenization happens on f
 
 | Table | Owner | Purpose |
 |---|---|---|
-| `square_customer_map` | This extension (`CRM_Square_Upgrader`) | Maps `(contact_id, payment_processor_id)` → Square customer ID. Created on install; dropped on uninstall. |
+| `square_customer_map` | This extension (`CRM_Square_Upgrader`) | Maps `(contact_id, payment_processor_id)` → Square customer ID; each customer maps to one contact per processor. Created on install; dropped on uninstall. |
 | `civicrm_payment_token` | CiviCRM core | Stores Square card-on-file references (one row per card), linked from `civicrm_contribution_recur.payment_token_id`. Not owned by this extension — never dropped on uninstall. |
 | `civicrm_paymentprocessor_webhook` | mjwshared extension | Webhook queue; retains deduplication, status and retry information. Not owned by this extension. |
 
@@ -176,10 +176,16 @@ The card element mounts into `#square-card-container`. Tokenization happens on f
 ```
 CRM/
   Core/Payment/
-    Square.php               Payment processor class (payments, subscriptions, refunds, webhooks)
-    SquareIPN.php            Webhook event router and processor
+    Square.php               Payment processor adapter (CiviCRM's CRM_Core_Payment contract)
+    SquareIPN.php            Webhook event router and queue processing
+    SquareRetryableException.php  Marks transient failures for webhook retry
     SquareDebugLogger.php    Opt-in verbose debug logging, gated by the square_ipn_debug_logging setting
   Square/
+    Gateway.php              Square API access (client, errors, idempotency keys)
+    Customers.php            Square customers and cards on file
+    Subscriptions.php        Catalog plans/variations; subscription changes and cancellation
+    Reconciler.php           Webhook-driven sync into CiviCRM's ledger
+    Status.php               CiviCRM option values and Square status mappings
     Form/Settings.php        Administer > System Settings > Square Settings (debug logging toggle)
     Upgrader.php             Creates/backfills/drops the square_customer_map table (see Database Tables)
 js/

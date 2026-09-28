@@ -21,27 +21,14 @@ use Square\Invoices\InvoicesClient;
 use Square\SquareClient;
 
 /**
- * CRM_Core_Payment_Square with its CiviCRM persistence replaced by arrays.
+ * CRM_Core_Payment_Square whose CiviCRM records live in arrays.
  *
- * Only the persistence seams are replaced; all of the reconciliation logic
- * under test is the real processor's. Each seam mimics the CiviCRM
- * behaviour the logic relies on: processor and test-mode scoping,
- * Payment.create appending its trxn_id and moving a Pending series to In
- * Progress, and the unique trxn_id/invoice_id indexes on contributions.
+ * Holds the fake ledger (recurring contributions, contributions, payments)
+ * that its CRM_Core_Payment_Square_FakeLedgerReconciler reads and writes,
+ * and stands in for the Square customer and plan lookups doRecurPayment()
+ * needs. All logic under test is the real classes'.
  */
 class CRM_Core_Payment_Square_FakeLedgerProcessor extends CRM_Core_Payment_Square {
-
-  /**
-   * CiviCRM's default contribution statuses (see tests/phpunit/bootstrap.php).
-   */
-  private const STATUS_NAMES = [
-    1 => 'Completed',
-    2 => 'Pending',
-    3 => 'Cancelled',
-    4 => 'Failed',
-    5 => 'In Progress',
-    7 => 'Refunded',
-  ];
 
   /**
    * Recurring contributions by ID, for every processor.
@@ -109,10 +96,139 @@ class CRM_Core_Payment_Square_FakeLedgerProcessor extends CRM_Core_Payment_Squar
   }
 
   /**
+   * Allocate the next record ID.
+   *
+   * @return int
+   */
+  public function nextId(): int {
+    // Past every existing ID, including records a test copied in.
+    $this->nextId = max([$this->nextId, ...array_keys($this->contributions), ...array_keys($this->payments)]) + 1;
+    return $this->nextId;
+  }
+
+  /**
    * @return \Square\SquareClient
    */
   protected function buildSquareClient(): SquareClient {
     return $this->mockClient;
+  }
+
+  /**
+   * @return \CRM_Square_Reconciler
+   */
+  protected function reconciler(): CRM_Square_Reconciler {
+    return new CRM_Core_Payment_Square_FakeLedgerReconciler($this->gateway(), $this);
+  }
+
+  /**
+   * @return \CRM_Square_Customers
+   */
+  protected function customers(): CRM_Square_Customers {
+    return new class($this->gateway()) extends CRM_Square_Customers {
+
+      /**
+       * @param array $params
+       *
+       * @return string
+       */
+      public function ensureSquareCustomer(array $params) {
+        return 'CUSTOMER-1';
+      }
+
+      /**
+       * @param string $customerID
+       *
+       * @return string|null
+       */
+      public function findSquareCustomerById($customerID) {
+        return $customerID;
+      }
+
+      /**
+       * @param string $customerID
+       * @param array $params
+       */
+      public function updateSquareCustomerDetails($customerID, $params) {
+      }
+
+    };
+  }
+
+  /**
+   * @return \CRM_Square_Subscriptions
+   */
+  protected function subscriptions(): CRM_Square_Subscriptions {
+    return new class($this->gateway()) extends CRM_Square_Subscriptions {
+
+      /**
+       * @param array $params
+       *
+       * @return string
+       */
+      public function getPlanVariationIdForParams(array $params): string {
+        return 'PLAN-VARIATION-1';
+      }
+
+    };
+  }
+
+  /**
+   * @param int $recurId
+   *
+   * @return string|null
+   */
+  protected function getRecurCardId(int $recurId): ?string {
+    return $this->recurCardId;
+  }
+
+  /**
+   * @param int $recurId
+   * @param string $subscriptionId
+   */
+  protected function saveRecurSubscription(int $recurId, string $subscriptionId): void {
+    $this->recurs[$recurId]['processor_id'] = $subscriptionId;
+    $this->recurs[$recurId]['contribution_status_id'] = 2;
+  }
+
+}
+
+/**
+ * CRM_Square_Reconciler whose CiviCRM persistence is its ledger's arrays.
+ *
+ * Only the persistence seams are replaced; all reconciliation logic under
+ * test is the real class's. Each seam mimics the CiviCRM behaviour the
+ * logic relies on: processor and test-mode scoping, Payment.create
+ * appending its trxn_id and moving a Pending series to In Progress, and the
+ * unique trxn_id/invoice_id indexes on contributions.
+ */
+class CRM_Core_Payment_Square_FakeLedgerReconciler extends CRM_Square_Reconciler {
+
+  /**
+   * CiviCRM's default contribution statuses (see tests/phpunit/bootstrap.php).
+   */
+  private const STATUS_NAMES = [
+    1 => 'Completed',
+    2 => 'Pending',
+    3 => 'Cancelled',
+    4 => 'Failed',
+    5 => 'In Progress',
+    7 => 'Refunded',
+  ];
+
+  /**
+   * The processor holding the fake ledger.
+   *
+   * @var \CRM_Core_Payment_Square_FakeLedgerProcessor
+   */
+  private CRM_Core_Payment_Square_FakeLedgerProcessor $ledger;
+
+  /**
+   * @param \CRM_Square_Gateway $gateway
+   * @param \CRM_Core_Payment_Square_FakeLedgerProcessor $ledger
+   */
+  public function __construct(CRM_Square_Gateway $gateway, CRM_Core_Payment_Square_FakeLedgerProcessor $ledger) {
+    parent::__construct($gateway);
+    $this->ledger = $ledger;
   }
 
   /**
@@ -138,10 +254,10 @@ class CRM_Core_Payment_Square_FakeLedgerProcessor extends CRM_Core_Payment_Squar
    * @return array|null
    */
   protected function findRecurBySubscriptionId(string $subscriptionId): ?array {
-    foreach ($this->recurs as $recur) {
+    foreach ($this->ledger->recurs as $recur) {
       if ($recur['processor_id'] === $subscriptionId
-        && $recur['payment_processor_id'] === $this->processorId()
-        && (bool) $recur['is_test'] === $this->isTestMode()) {
+        && $recur['payment_processor_id'] === $this->gateway->processorId()
+        && (bool) $recur['is_test'] === $this->gateway->isTestMode()) {
         return $recur;
       }
     }
@@ -154,7 +270,7 @@ class CRM_Core_Payment_Square_FakeLedgerProcessor extends CRM_Core_Payment_Squar
    * @return array
    */
   protected function getRecurContributions(int $recurId): array {
-    $rows = array_filter($this->contributions, fn (array $row) => $row['contribution_recur_id'] === $recurId && empty($row['is_template']));
+    $rows = array_filter($this->ledger->contributions, fn (array $row) => $row['contribution_recur_id'] === $recurId && empty($row['is_template']));
     ksort($rows);
     return array_values(array_map([$this, 'publicRow'], $rows));
   }
@@ -166,7 +282,7 @@ class CRM_Core_Payment_Square_FakeLedgerProcessor extends CRM_Core_Payment_Squar
    * @return array|null
    */
   protected function findContributionForSquarePayment(string $paymentId, ?string $referenceId): ?array {
-    foreach ($this->contributions as $row) {
+    foreach ($this->ledger->contributions as $row) {
       if (empty($row['contribution_recur_id'])
         && ($row['trxn_id'] === $paymentId || ($referenceId && $row['invoice_id'] === $referenceId))) {
         return $this->publicRow($row);
@@ -181,8 +297,8 @@ class CRM_Core_Payment_Square_FakeLedgerProcessor extends CRM_Core_Payment_Squar
    * @return array|null
    */
   protected function findRecordedPayment(string $trxnId): ?array {
-    foreach ($this->payments as $id => $payment) {
-      if ($payment['trxn_id'] === $trxnId && $payment['payment_processor_id'] === $this->processorId()) {
+    foreach ($this->ledger->payments as $id => $payment) {
+      if ($payment['trxn_id'] === $trxnId && $payment['payment_processor_id'] === $this->gateway->processorId()) {
         return [
           'id' => $id,
           'contribution_id' => $payment['contribution_id'],
@@ -199,14 +315,14 @@ class CRM_Core_Payment_Square_FakeLedgerProcessor extends CRM_Core_Payment_Squar
    * @param bool $sendReceipt
    */
   protected function recordContributionPayment(int $contributionId, array $values, bool $sendReceipt): void {
-    $contribution = &$this->contributions[$contributionId];
+    $contribution = &$this->ledger->contributions[$contributionId];
     if ($contribution['status'] === 'Completed') {
       // CiviCRM would silently record an overpayment.
       throw new LogicException("A second payment was recorded on Completed contribution {$contributionId}.");
     }
-    $this->payments[++$this->nextId] = $values + [
+    $this->ledger->payments[$this->ledger->nextId()] = $values + [
       'contribution_id' => $contributionId,
-      'payment_processor_id' => $this->processorId(),
+      'payment_processor_id' => $this->gateway->processorId(),
       'send_receipt' => $sendReceipt,
     ];
 
@@ -225,8 +341,8 @@ class CRM_Core_Payment_Square_FakeLedgerProcessor extends CRM_Core_Payment_Squar
       $contribution['status'] = 'Completed';
       // CRM_Contribute_BAO_ContributionRecur::updateOnNewPayment().
       $recurId = $contribution['contribution_recur_id'];
-      if ($recurId && $this->recurs[$recurId]['contribution_status_id'] === 2) {
-        $this->recurs[$recurId]['contribution_status_id'] = 5;
+      if ($recurId && $this->ledger->recurs[$recurId]['contribution_status_id'] === 2) {
+        $this->ledger->recurs[$recurId]['contribution_status_id'] = 5;
       }
     }
   }
@@ -238,17 +354,17 @@ class CRM_Core_Payment_Square_FakeLedgerProcessor extends CRM_Core_Payment_Squar
    * @return array
    */
   protected function repeatRecurContribution(array $recur, array $values): array {
-    $this->repeatCalls[] = $values;
+    $this->ledger->repeatCalls[] = $values;
     $recurId = (int) $recur['id'];
     // The template is the series' latest contribution, whatever its status.
-    $series = array_filter($this->contributions, fn (array $row) => $row['contribution_recur_id'] === $recurId);
+    $series = array_filter($this->ledger->contributions, fn (array $row) => $row['contribution_recur_id'] === $recurId);
     ksort($series);
     $template = end($series) ?: [];
 
-    $id = ++$this->nextId;
+    $id = $this->ledger->nextId();
     $this->assertUnique($id, 'trxn_id', $values['trxn_id'] ?? NULL);
     $this->assertUnique($id, 'invoice_id', $values['invoice_id'] ?? NULL);
-    $this->contributions[$id] = [
+    $this->ledger->contributions[$id] = [
       'id' => $id,
       'contribution_recur_id' => $recurId,
       'status' => $values['contribution_status'],
@@ -258,7 +374,7 @@ class CRM_Core_Payment_Square_FakeLedgerProcessor extends CRM_Core_Payment_Squar
       'invoice_id' => $values['invoice_id'] ?? NULL,
       'financial_type_id' => $template['financial_type_id'] ?? NULL,
     ];
-    return $this->publicRow($this->contributions[$id]);
+    return $this->publicRow($this->ledger->contributions[$id]);
   }
 
   /**
@@ -267,7 +383,7 @@ class CRM_Core_Payment_Square_FakeLedgerProcessor extends CRM_Core_Payment_Squar
    * @return float
    */
   protected function getContributionFeeAmount(int $contributionId): float {
-    return (float) ($this->contributions[$contributionId]['fee_amount'] ?? 0);
+    return (float) ($this->ledger->contributions[$contributionId]['fee_amount'] ?? 0);
   }
 
   /**
@@ -284,7 +400,7 @@ class CRM_Core_Payment_Square_FakeLedgerProcessor extends CRM_Core_Payment_Squar
         $this->assertUnique($contributionId, $field, $values[$field]);
       }
     }
-    $this->contributions[$contributionId] = $values + $this->contributions[$contributionId];
+    $this->ledger->contributions[$contributionId] = $values + $this->ledger->contributions[$contributionId];
   }
 
   /**
@@ -293,9 +409,9 @@ class CRM_Core_Payment_Square_FakeLedgerProcessor extends CRM_Core_Payment_Squar
    * @return int
    */
   protected function createContribution(array $values): int {
-    $this->createCalls[] = $values;
-    $id = ++$this->nextId;
-    $this->contributions[$id] = [
+    $this->ledger->createCalls[] = $values;
+    $id = $this->ledger->nextId();
+    $this->ledger->contributions[$id] = [
       'id' => $id,
       'contribution_recur_id' => NULL,
       'status' => self::STATUS_NAMES[$values['contribution_status_id']],
@@ -317,55 +433,49 @@ class CRM_Core_Payment_Square_FakeLedgerProcessor extends CRM_Core_Payment_Squar
   }
 
   /**
-   * @param int $recurId
+   * @param string $trxnId
    *
-   * @return string|null
+   * @return int|null
    */
-  protected function getRecurCardId(int $recurId): ?string {
-    return $this->recurCardId;
+  protected function findContributionIdByTrxnId(string $trxnId): ?int {
+    foreach ($this->ledger->contributions as $id => $row) {
+      if (in_array($trxnId, explode(',', (string) ($row['trxn_id'] ?? '')), TRUE)) {
+        return $id;
+      }
+    }
+    return NULL;
   }
 
   /**
-   * @param int $recurId
-   * @param string $subscriptionId
+   * @param int $contributionId
+   * @param string $trxnId
+   *
+   * @return array|null
    */
-  protected function saveRecurSubscription(int $recurId, string $subscriptionId): void {
-    $this->recurs[$recurId]['processor_id'] = $subscriptionId;
-    $this->recurs[$recurId]['contribution_status_id'] = 2;
+  protected function findContributionPayment(int $contributionId, string $trxnId): ?array {
+    foreach ($this->ledger->payments as $id => $payment) {
+      if ($payment['contribution_id'] === $contributionId && $payment['trxn_id'] === $trxnId) {
+        return [
+          'id' => $id,
+          'total_amount' => $payment['total_amount'],
+          'payment_processor_id' => $payment['payment_processor_id'] ?? NULL,
+        ];
+      }
+    }
+    return NULL;
   }
 
   /**
    * @param array $params
-   *
-   * @return string
    */
-  public function ensureSquareCustomer(array $params) {
-    return 'CUSTOMER-1';
-  }
-
-  /**
-   * @param string $customerID
-   *
-   * @return string|null
-   */
-  protected function findSquareCustomerById($customerID) {
-    return $customerID;
-  }
-
-  /**
-   * @param string $customerID
-   * @param array $params
-   */
-  protected function updateSquareCustomerDetails($customerID, $params) {
-  }
-
-  /**
-   * @param array $params
-   *
-   * @return string
-   */
-  protected function getPlanVariationIdForParams(array $params): string {
-    return 'PLAN-VARIATION-1';
+  protected function recordRefundPayment(array $params): void {
+    $contributionId = $params['contribution_id'];
+    $this->ledger->payments[$this->ledger->nextId()] = $params + ['send_receipt' => FALSE];
+    // CRM_Financial_BAO_Payment::create(): Refunded once nothing paid remains.
+    $paid = array_sum(array_column(array_filter($this->ledger->payments, fn (array $payment) => $payment['contribution_id'] === $contributionId), 'total_amount'));
+    if (round($paid, 2) <= 0) {
+      $this->ledger->contributions[$contributionId]['status'] = 'Refunded';
+    }
   }
 
   /**
@@ -379,7 +489,7 @@ class CRM_Core_Payment_Square_FakeLedgerProcessor extends CRM_Core_Payment_Squar
     if ($value === NULL || $value === '') {
       return;
     }
-    foreach ($this->contributions as $id => $row) {
+    foreach ($this->ledger->contributions as $id => $row) {
       if ($id !== $contributionId && ($row[$field] ?? NULL) === $value) {
         throw new RuntimeException("Duplicate {$field} {$value} (contribution {$id}).");
       }

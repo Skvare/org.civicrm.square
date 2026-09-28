@@ -11,16 +11,11 @@ require_once __DIR__ . '/SquareUnitTestCase.php';
  */
 class CRM_Core_Payment_Square_StatusMappingTest extends CRM_Core_Payment_Square_SquareUnitTestCase {
 
-  private function processor(): CRM_Core_Payment_Square {
-    $config = $this->processorConfig();
-    return new CRM_Core_Payment_Square('live', $config);
-  }
-
   /**
    * @dataProvider paymentStatusProvider
    */
   public function testMapPaymentStatus(string $squareStatus, ?int $expected): void {
-    $actual = $this->callMethod($this->processor(), 'mapPaymentStatus', [$squareStatus]);
+    $actual = CRM_Square_Status::mapPaymentStatus($squareStatus);
     $this->assertSame($expected, $actual);
   }
 
@@ -44,7 +39,7 @@ class CRM_Core_Payment_Square_StatusMappingTest extends CRM_Core_Payment_Square_
    * @dataProvider subscriptionStatusProvider
    */
   public function testMapSquareSubscriptionStatusToCivi(string $squareStatus, ?int $expected): void {
-    $actual = $this->callMethod($this->processor(), 'mapSquareSubscriptionStatusToCivi', [$squareStatus]);
+    $actual = CRM_Square_Status::mapSubscriptionStatus($squareStatus);
     $this->assertSame($expected, $actual);
   }
 
@@ -68,7 +63,8 @@ class CRM_Core_Payment_Square_StatusMappingTest extends CRM_Core_Payment_Square_
    * @dataProvider recurStatusChangeProvider
    */
   public function testRecurStatusChangeGuard(int $current, int $new, bool $expected): void {
-    $actual = $this->callMethod($this->processor(), 'isRecurStatusChangeAllowed', [$current, $new]);
+    $reconciler = new CRM_Square_Reconciler(new CRM_Square_Gateway($this->processorConfig()));
+    $actual = $this->callMethod($reconciler, 'isRecurStatusChangeAllowed', [$current, $new]);
     $this->assertSame($expected, $actual);
   }
 
@@ -95,7 +91,7 @@ class CRM_Core_Payment_Square_StatusMappingTest extends CRM_Core_Payment_Square_
    * @dataProvider paymentInstrumentProvider
    */
   public function testMapPaymentInstrument(?string $sourceType, int $expected): void {
-    $actual = $this->callMethod($this->processor(), 'mapPaymentInstrument', [$sourceType]);
+    $actual = CRM_Square_Status::mapPaymentInstrument($sourceType);
     $this->assertSame($expected, $actual);
   }
 
