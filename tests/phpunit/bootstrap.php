@@ -62,6 +62,16 @@ if (!class_exists('CRM_Square_ExtensionUtil')) {
       return $path;
     }
 
+    /**
+     * @param string $text
+     * @param array $params
+     *
+     * @return string
+     */
+    public static function ts($text, array $params = []): string {
+      return ts($text, $params);
+    }
+
   }
 }
 if (!function_exists('ts')) {
@@ -106,6 +116,111 @@ if (!class_exists('CRM_Contribute_PseudoConstant')) {
         6 => 'Overdue',
         7 => 'Refunded',
       ];
+    }
+
+  }
+}
+if (!class_exists('CRM_Core_PseudoConstant')) {
+
+  /**
+   * Minimal stand-in for CiviCRM core's pseudoconstant lookup.
+   *
+   * Used by CRM_Core_Payment_Square::pseudoConstantId() for
+   * contribution_status_id, payment_instrument_id, and financial_type_id.
+   * Values match CiviCRM's own default option groups, seeded on every
+   * fresh install.
+   */
+  class CRM_Core_PseudoConstant {
+
+    /**
+     * @param string $baoName
+     * @param string $fieldName
+     * @param string $value
+     *
+     * @return int|false
+     */
+    public static function getKey($baoName, $fieldName, $value) {
+      $options = [
+        'contribution_status_id' => [
+          1 => 'Completed',
+          2 => 'Pending',
+          3 => 'Cancelled',
+          4 => 'Failed',
+          5 => 'In Progress',
+          6 => 'Overdue',
+          7 => 'Refunded',
+        ],
+        'payment_instrument_id' => [
+          1 => 'Credit Card',
+          2 => 'Debit Card',
+          3 => 'Cash',
+          4 => 'Check',
+          5 => 'EFT',
+        ],
+        'financial_type_id' => [
+          1 => 'Donation',
+          2 => 'Member Dues',
+          3 => 'Campaign Contribution',
+          4 => 'Event Fee',
+        ],
+      ];
+      return array_search($value, $options[$fieldName] ?? [], TRUE);
+    }
+
+  }
+}
+if (!class_exists('Civi')) {
+
+  /**
+   * Minimal stand-in for CiviCRM's Civi service locator.
+   *
+   * Only settings() and log() are provided. Log calls are recorded in
+   * Civi::$logged so tests can assert reconciliation errors were raised.
+   */
+  class Civi {
+
+    /**
+     * Messages logged during the current test, as [level, message] pairs.
+     *
+     * @var array
+     */
+    public static array $logged = [];
+
+    /**
+     * @return object
+     */
+    public static function settings() {
+      return new class() {
+
+        /**
+         * @param string $name
+         *
+         * @return mixed
+         */
+        public function get($name) {
+          return NULL;
+        }
+
+      };
+    }
+
+    /**
+     * @param string $channel
+     *
+     * @return object
+     */
+    public static function log($channel = 'default') {
+      return new class() {
+
+        /**
+         * @param string $level
+         * @param array $args
+         */
+        public function __call($level, $args) {
+          Civi::$logged[] = [$level, (string) ($args[0] ?? '')];
+        }
+
+      };
     }
 
   }

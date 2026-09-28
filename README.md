@@ -61,7 +61,7 @@ Separate sandbox credentials are supported for test mode. The processor automati
 | EVERY_SIX_MONTHS | Every 6 months |
 | ANNUAL | Every year |
 
-Recurring payments use the Square Catalog API to create subscription plans and plan variations on demand, then create a Square Subscription linked to a card-on-file. An initial charge is made immediately at subscription creation; subsequent charges are handled by Square and reported back via webhooks.
+Recurring payments use the Square Catalog API to create subscription plans and plan variations on demand, then create a Square Subscription linked to a card-on-file. The subscription starts immediately and Square itself charges every installment, including the first — no separate charge is made at checkout. The checkout's contribution stays Pending until Square confirms that first charge by webhook, which then completes that same contribution; each later installment becomes a new contribution (via `Contribution.repeattransaction`) completed the same way. All payments are recorded with CiviCRM's `Payment.create`, and the Square payment ID becomes the contribution's and the payment's transaction ID.
 
 ---
 
@@ -70,9 +70,12 @@ Recurring payments use the Square Catalog API to create subscription plans and p
 Configure the Square webhook endpoint as
 `https://your-site.org/civicrm/payment/ipn/{processor_id}`. It validates the
 `X-Square-Hmacsha256-Signature` header before the event is queued. The queue
-record is processed immediately after it is accepted. Failed records remain in
-the CiviCRM webhook queue for the **Process Pending Webhooks** scheduled job
-to retry.
+record is processed immediately after it is accepted. A record that fails
+transiently (Square unavailable, or a related CiviCRM record not saved yet
+because webhooks arrived out of order) is left in status `new` for the
+**Process Payment Processor Webhooks** scheduled job to retry, for up to 72
+hours; any other failure is marked `error`. See
+[docs/WEBHOOKS.md](docs/WEBHOOKS.md).
 
 ### Handled events
 
@@ -81,11 +84,11 @@ to retry.
 | `subscription.created` | Syncs subscription status to `ContributionRecur` |
 | `subscription.updated` | Syncs subscription status/amount to `ContributionRecur` |
 | `subscription.canceled` | Marks `ContributionRecur` as Cancelled |
-| `invoice.created` | Creates a Pending contribution for the upcoming invoice |
-| `invoice.payment_made` | Reconciles the paid invoice |
-| `invoice.payment_failed` | Reconciles the failed invoice |
-| `payment.updated` | Reconciles an existing contribution |
-| `refund.created` | Reconciles a refund |
+| `invoice.created` | Nothing is recorded: the invoice is still a draft Square has not charged |
+| `invoice.payment_made` | Records the installment: completes the checkout's Pending contribution for the first invoice, or creates and completes the next contribution of the series |
+| `invoice.payment_failed` | Marks that installment's contribution Failed (the first installment's stays Pending, since Square keeps the invoice open) |
+| `payment.updated` | Completes a one-time contribution; for a subscription payment, looks up its invoice at Square and records the installment exactly as `invoice.payment_made` does |
+| `refund.created`, `refund.updated` | Records a completed refund as a negative payment against the refunded payment |
 
 Webhook deduplication uses CiviCRM's `civicrm_paymentprocessor_webhook` queue
 and Square's globally unique event ID. Do not log webhook signatures, access

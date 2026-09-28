@@ -25,5 +25,9 @@ shared between sandbox and production.
    credentials only after the sandbox flow succeeds.
 
 Recurring contributions create or reuse Square Catalog plans and variations.
-The initial charge occurs at setup; later subscription activity is reconciled
-from Square webhook events.
+Square charges every installment, including the first, and reports it by
+webhook: the checkout's contribution stays Pending until Square's first charge
+is confirmed, so the webhook subscription (see [WEBHOOKS.md](WEBHOOKS.md)) must
+be in place before recurring payments are taken. See
+[WEBHOOKS.md](WEBHOOKS.md#recurring-installments) for how installments are
+recorded and receipted.

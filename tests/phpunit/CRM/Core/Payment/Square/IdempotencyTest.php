@@ -38,10 +38,13 @@ class CRM_Core_Payment_Square_IdempotencyTest extends CRM_Core_Payment_Square_Sq
   }
 
   public function testKeyDiffersBetweenSubscriptionAndSubscriptionInit(): void {
-    // Regression test: these two operations share the same $recurId
-    // reference and must not collide with each other or with the plain
-    // subscription create key (see doRecurPayment()'s 'subscription-init'
-    // fix for the VALUE_TOO_LONG idempotency-key bug).
+    // Regression test for the generic idempotencyKey() helper: two
+    // operations sharing the same reference (e.g. a recur ID) must never
+    // collide. doRecurPayment() no longer makes a separate
+    // 'subscription-init' call itself (removed to fix the double-charge
+    // bug -- the initial charge is now handled entirely by Square's own
+    // subscription billing), but the helper's collision-avoidance
+    // guarantee is still load-bearing for every other caller.
     $processor = $this->processor();
     $recurId = '999';
     $subscriptionKey = $this->key($processor, 'subscription', $recurId);

@@ -13,6 +13,7 @@ class CRM_Square_Upgrader extends CRM_Extension_Upgrader_Base {
    * Runs on fresh installs only.
    */
   public function install(): void {
+    _square_assert_php_version();
     $this->createSquareCustomerMapTable();
   }
 
@@ -25,6 +26,7 @@ class CRM_Square_Upgrader extends CRM_Extension_Upgrader_Base {
    * now-superseded custom field group.
    */
   public function upgrade_1000(): bool {
+    _square_assert_php_version();
     $this->createSquareCustomerMapTable();
     $this->backfillSquareCustomerMapFromCustomField();
     return TRUE;

@@ -1,7 +1,5 @@
 <?php
 
-use Civi\Api4\Contribution;
-use Civi\Api4\ContributionRecur;
 use Civi\Api4\PaymentprocessorWebhook;
 
 /**
@@ -14,14 +12,30 @@ use Civi\Api4\PaymentprocessorWebhook;
  * Handles:
  *   subscription.created, subscription.updated, subscription.canceled
  *   invoice.created, invoice.payment_made, invoice.payment_failed
- *   payment.updated, refund.created
+ *   payment.updated, refund.created, refund.updated
  *
  * Webhook lifecycle:
  *   1. onReceiveWebhook() validates the event type, deduplicates via
- *      civicrm_paymentprocessor_webhook and returns. CiviCRM's "Process
- *      Pending Webhooks" scheduled job invokes the processor later.
+ *      civicrm_paymentprocessor_webhook (a table owned by the mjwshared
+ *      extension, which this extension requires), records the event and
+ *      processes it immediately in the same request.
+ *   2. mjwshared's "Process Payment Processor Webhooks" scheduled job
+ *      (Job.process_paymentprocessor_webhooks) is a backstop: it only picks
+ *      up rows in status 'new', which is where a transient failure (see
+ *      CRM_Core_Payment_SquareRetryableException) leaves an event, and calls
+ *      CRM_Core_Payment_Square::processWebhookEvent(), which invokes
+ *      processQueuedWebhookEvent() here.
  */
 class CRM_Core_Payment_SquareIPN {
+
+  /**
+   * How long, in seconds, a transiently failing event keeps being retried.
+   *
+   * The mjwshared job retries 'new' rows on every run with no attempt
+   * limit, so without this bound an event that can never be resolved would
+   * be retried until the job's own cleanup deletes it months later.
+   */
+  public const RETRY_WINDOW_SECONDS = 72 * 3600;
 
   /**
    * Payment processor handling this webhook.
@@ -103,15 +117,18 @@ class CRM_Core_Payment_SquareIPN {
       'invoice.payment_failed',
       'payment.updated',
       'refund.created',
+      'refund.updated',
     ];
   }
 
   /**
    * Main entry point — called from Square::handlePaymentNotification().
    *
-   * Records the webhook in civicrm_paymentprocessor_webhook for deduplication
-   * and audit trail. Webhook delivery must be quick: processing is deferred to
-   * CiviCRM's queue worker.
+   * Records the webhook in civicrm_paymentprocessor_webhook for
+   * deduplication and audit trail, then processes it immediately, in the
+   * same request, so donors and staff see the result without waiting for
+   * cron. The scheduled job only retries events left in status 'new' by a
+   * transient failure (see processQueuedWebhookEvent()).
    *
    * @param array $payload
    *   Decoded JSON webhook payload.
@@ -142,26 +159,46 @@ class CRM_Core_Payment_SquareIPN {
       return FALSE;
     }
 
-    // Deduplicate across every queue state. A previously failed event remains
-    // retryable; accepting a replay must not create a second queue record.
-    $existingWebhooks = PaymentprocessorWebhook::get(FALSE)
-      ->addWhere('payment_processor_id', '=', $processorId)
-      ->addWhere('event_id', '=', (string) $eventId)
-      ->execute();
-
-    foreach ($existingWebhooks as $existing) {
-      CRM_Core_Payment_SquareDebugLogger::log("Square IPN: duplicate event '{$eventId}' already queued, skipping.");
+    // Guard the check-then-insert dedup below with a lock scoped to this
+    // processor+event, so two concurrent deliveries of the same event
+    // (Square does redeliver) can't both pass the "no existing row" check.
+    $lock = new CRM_Core_Lock("worker.square.webhook.{$processorId}.{$eventId}", 30);
+    if (!$lock->acquire()) {
+      CRM_Core_Payment_SquareDebugLogger::log("Square IPN: could not acquire dedup lock for event '{$eventId}', treating as in-flight duplicate.");
       return TRUE;
     }
 
-    $newWebhookEvent = PaymentprocessorWebhook::create(FALSE)
-      ->addValue('payment_processor_id', $processorId)
-      ->addValue('trigger', $eventType)
-      ->addValue('identifier', $identifier)
-      ->addValue('event_id', (string) ($eventId ?? ''))
-      ->addValue('data', $this->getData())
-      ->execute()
-      ->first();
+    try {
+      // Deduplicate across every queue state. A replay is never reprocessed
+      // here: a row still in 'new' is retried by the scheduled job, and an
+      // 'error' row needs someone to look at it first.
+      $existing = PaymentprocessorWebhook::get(FALSE)
+        ->addSelect('id')
+        ->addWhere('payment_processor_id', '=', $processorId)
+        ->addWhere('event_id', '=', (string) $eventId)
+        ->execute()
+        ->first();
+      if ($existing) {
+        CRM_Core_Payment_SquareDebugLogger::log("Square IPN: duplicate event '{$eventId}' already queued, skipping.");
+        return TRUE;
+      }
+
+      // Recorded in the default status 'new', so that if this request dies
+      // while processing it below, the scheduled job still retries it. A
+      // cron run picking it up concurrently is harmless: recording is
+      // idempotent and serialized by CRM_Core_Payment_Square's locks.
+      $newWebhookEvent = PaymentprocessorWebhook::create(FALSE)
+        ->addValue('payment_processor_id', $processorId)
+        ->addValue('trigger', $eventType)
+        ->addValue('identifier', $identifier)
+        ->addValue('event_id', (string) $eventId)
+        ->addValue('data', $this->getData())
+        ->execute()
+        ->first();
+    }
+    finally {
+      $lock->release();
+    }
 
     return $this->processQueuedWebhookEvent($newWebhookEvent);
   }
@@ -169,12 +206,22 @@ class CRM_Core_Payment_SquareIPN {
   /**
    * Process a single queued webhook event and update its record.
    *
-   * Called inline from onReceiveWebhook() and may also be called by the
-   * CiviCRM "Process Pending Webhooks" scheduled job.
+   * Called immediately from onReceiveWebhook(), and later by the scheduled
+   * job (via CRM_Core_Payment_Square::processWebhookEvent()) for any row
+   * left in status 'new'.
+   *
+   * Outcomes:
+   *  - 'success': processed.
+   *  - 'new': a CRM_Core_Payment_SquareRetryableException was thrown (Square
+   *    API unavailable, or a related record not there yet because webhooks
+   *    arrived out of order) — left for the job to retry, for up to
+   *    RETRY_WINDOW_SECONDS after the event was first received.
+   *  - 'error': anything else, including a retryable failure that outlived
+   *    the retry window. Never retried automatically.
    *
    * @param array $webhookEvent
    *
-   * @return bool TRUE on success.
+   * @return bool TRUE unless the event failed permanently.
    */
   public function processQueuedWebhookEvent(array $webhookEvent): bool {
     $payload = $webhookEvent['data'];
@@ -190,35 +237,59 @@ class CRM_Core_Payment_SquareIPN {
 
     $this->setInputParameters($payload, $eventType);
 
-    $ok = FALSE;
+    $status = 'error';
     $message = '';
 
     try {
       $this->processWebhookEvent($payload, $eventType);
-      $ok = TRUE;
+      $status = 'success';
       $message = 'Processed successfully';
     }
-    catch (Exception $e) {
+    catch (CRM_Core_Payment_SquareRetryableException $e) {
+      if ($this->isWithinRetryWindow($webhookEvent)) {
+        $status = 'new';
+        $message = 'Will retry: ' . $e->getMessage();
+        Civi::log()->warning("Square IPN: processQueuedWebhookEvent transient failure, will retry. EventID: {$this->event_id}: " . $e->getMessage());
+      }
+      else {
+        $message = 'Gave up retrying: ' . $e->getMessage();
+        Civi::log()->error("Square IPN: processQueuedWebhookEvent still failing after the retry window, giving up. EventID: {$this->event_id}: " . $e->getMessage());
+      }
+    }
+    catch (\Throwable $e) {
+      // Catches Error/TypeError too, not just Exception — the scheduled job
+      // does not catch anything itself, so an escaping error would abort it
+      // and leave this and every later row stuck in 'processing'.
       $message = $e->getMessage() . "\n" . $e->getTraceAsString();
       Civi::log()->error("Square IPN: processQueuedWebhookEvent failed. EventID: {$this->event_id}: " . $e->getMessage());
     }
 
     $update = PaymentprocessorWebhook::update(FALSE)
       ->addWhere('id', '=', $webhookEvent['id'])
-      ->addValue('status', $ok ? 'success' : 'error')
+      ->addValue('status', $status)
       ->addValue('message', preg_replace('/^(.{250}).*/su', '$1 ...', $message));
-    if ($ok) {
+    if ($status === 'success') {
       $update->addValue('processed_date', 'now');
     }
     $update->execute();
 
-    return $ok;
+    return $status !== 'error';
+  }
+
+  /**
+   * Whether a queued event is still young enough to be retried.
+   *
+   * @param array $webhookEvent
+   *
+   * @return bool
+   */
+  protected function isWithinRetryWindow(array $webhookEvent): bool {
+    $created = empty($webhookEvent['created_date']) ? FALSE : strtotime($webhookEvent['created_date']);
+    return $created === FALSE || (time() - $created) < self::RETRY_WINDOW_SECONDS;
   }
 
   /**
    * Build a queue identifier for related webhook events.
-   *
-   * Related invoice events share an identifier and are processed serially.
    *
    * @return string
    */
@@ -301,10 +372,15 @@ class CRM_Core_Payment_SquareIPN {
         break;
 
       case 'invoice.created':
-        $invoice = $obj['invoice'] ?? [];
-        if (!empty($invoice)) {
-          $this->handleInvoiceCreated($invoice);
-        }
+        // Nothing to record. Square publishes invoice.created while the
+        // invoice is still a DRAFT it has not tried to charge, so it is never
+        // evidence of payment — and it must not create a contribution
+        // either: the first invoice of a subscription belongs to the Pending
+        // contribution CiviCRM created at checkout. The installment is
+        // recorded once Square confirms the charge, via invoice.payment_made
+        // or payment.updated (see
+        // CRM_Core_Payment_Square::recordSubscriptionInstallment()).
+        CRM_Core_Payment_SquareDebugLogger::log("Square IPN: invoice.created noted for invoice {$this->invoice_id} (subscription " . ($this->subscription_id ?? 'null') . '); nothing is recorded until Square confirms payment.');
         break;
 
       case 'invoice.payment_made':
@@ -315,7 +391,7 @@ class CRM_Core_Payment_SquareIPN {
       case 'invoice.payment_failed':
         $invoice = $obj['invoice'] ?? [];
         if (!empty($invoice)) {
-          $this->handleInvoicePaymentFailed($invoice);
+          $this->_paymentProcessor->syncInvoicePaymentFailedFromSquare($invoice);
         }
         break;
 
@@ -328,10 +404,11 @@ class CRM_Core_Payment_SquareIPN {
         break;
 
       case 'refund.created':
+      case 'refund.updated':
         $refund = $obj['refund'] ?? [];
         if (!empty($refund)) {
           $this->_paymentProcessor->syncRefundFromSquare($refund);
-          CRM_Core_Payment_SquareDebugLogger::log("Square IPN: refund.created synced for payment {$this->payment_id}");
+          CRM_Core_Payment_SquareDebugLogger::log("Square IPN: {$eventType} synced for payment {$this->payment_id}");
         }
         break;
 
@@ -341,145 +418,6 @@ class CRM_Core_Payment_SquareIPN {
     }
 
     return TRUE;
-  }
-
-  /**
-   * Handle invoice.created — create a Pending contribution for an upcoming invoice.
-   *
-   * Square invoice payload path:
-   *   data.object.invoice.{id, subscription_id, status,
-   *   payment_requests[0].computed_amount_money.{amount(cents), currency}}
-   *
-   * @param array $invoice
-   *   Invoice object from Square webhook payload.
-   */
-  protected function handleInvoiceCreated(array $invoice): void {
-    $invoiceId = $invoice['id'] ?? NULL;
-    $subscriptionId = $invoice['subscription_id'] ?? NULL;
-    $status = strtoupper($invoice['status'] ?? '');
-
-    if (!$invoiceId || !$subscriptionId) {
-      CRM_Core_Payment_SquareDebugLogger::log('Square IPN: invoice.created missing invoice ID or subscription_id.');
-      return;
-    }
-
-    // Skip invoices that are already paid — invoice.payment_made handles those.
-    if (in_array($status, ['PAID', 'PAYMENT_PENDING'], TRUE)) {
-      CRM_Core_Payment_SquareDebugLogger::log("Square IPN: invoice.created skipped (status={$status}).");
-      return;
-    }
-
-    $recur = ContributionRecur::get(FALSE)
-      ->addWhere('processor_id', '=', $subscriptionId)
-      ->addWhere('is_test', 'IN', [TRUE, FALSE])
-      ->execute()
-      ->first();
-
-    if (!$recur) {
-      CRM_Core_Payment_SquareDebugLogger::log("Square IPN: invoice.created — no recur found for subscription {$subscriptionId}.");
-      return;
-    }
-
-    // Prevent duplicates.
-    $existing = Contribution::get(FALSE)
-      ->addSelect('id')
-      ->addWhere('invoice_id', '=', $invoiceId)
-      ->addWhere('is_test', 'IN', [TRUE, FALSE])
-      ->execute()
-      ->first();
-
-    if ($existing) {
-      return;
-    }
-
-    $money = $invoice['payment_requests'][0]['computed_amount_money'] ?? NULL;
-    $amount = $money ? (((float) $money['amount']) / 100) : 0.0;
-    $currency = $money['currency'] ?? $recur['currency'] ?? 'USD';
-    $orderID = $invoice['order_id'] ?? NULL;
-    Contribution::create(FALSE)
-      ->addValue('contact_id', $recur['contact_id'])
-      ->addValue('contribution_recur_id', $recur['id'])
-      ->addValue('financial_type_id', $recur['financial_type_id'])
-      ->addValue('total_amount', $amount)
-      ->addValue('currency', $currency)
-    // Pending.
-      ->addValue('contribution_status_id', 2)
-      ->addValue('invoice_id', $invoiceId)
-      ->addValue('invoice_number', $orderID)
-      ->addValue('is_test', $recur['is_test'])
-      ->addValue('source', 'Square Invoice (Webhook)')
-      ->execute();
-
-    CRM_Core_Payment_SquareDebugLogger::log("Square IPN: Created Pending contribution for invoice {$invoiceId}.");
-  }
-
-  /**
-   * Handle invoice.payment_failed — mark existing contribution as Failed or create a new Failed one.
-   *
-   * @param array $invoice
-   *   Invoice object from Square webhook payload.
-   */
-  protected function handleInvoicePaymentFailed(array $invoice): void {
-    $invoiceId = $invoice['id'] ?? NULL;
-    $subscriptionId = $invoice['subscription_id'] ?? NULL;
-
-    if (!$invoiceId) {
-      CRM_Core_Payment_SquareDebugLogger::log('Square IPN: invoice.payment_failed missing invoice ID.');
-      return;
-    }
-
-    // If a contribution already exists for this invoice, mark it Failed.
-    $contribution = Contribution::get(FALSE)
-      ->addSelect('id')
-      ->addWhere('invoice_id', '=', $invoiceId)
-      ->execute()
-      ->first();
-
-    if (!empty($contribution)) {
-      Contribution::update(FALSE)
-        ->addWhere('id', '=', $contribution['id'])
-      // Failed.
-        ->addValue('contribution_status_id', 4)
-        ->execute();
-      CRM_Core_Payment_SquareDebugLogger::log("Square IPN: Marked contribution {$contribution['id']} as Failed for invoice {$invoiceId}.");
-      return;
-    }
-
-    // No existing contribution — create a Failed one from the recurring record.
-    if (!$subscriptionId) {
-      CRM_Core_Payment_SquareDebugLogger::log("Square IPN: invoice.payment_failed — no contribution and no subscription_id for invoice {$invoiceId}.");
-      return;
-    }
-
-    $recur = ContributionRecur::get(FALSE)
-      ->addWhere('processor_id', '=', $subscriptionId)
-      ->addWhere('is_test', 'IN', [TRUE, FALSE])
-      ->addSelect('id', 'contact_id', 'financial_type_id', 'currency')
-      ->execute()
-      ->first();
-
-    if (!$recur) {
-      CRM_Core_Payment_SquareDebugLogger::log("Square IPN: invoice.payment_failed — no recur for subscription {$subscriptionId}.");
-      return;
-    }
-
-    $money = $invoice['payment_requests'][0]['computed_amount_money'] ?? NULL;
-    $amount = $money ? (((float) $money['amount']) / 100) : 0.0;
-    $currency = $money['currency'] ?? $recur['currency'] ?? 'USD';
-
-    Contribution::create(FALSE)
-      ->addValue('contact_id', $recur['contact_id'])
-      ->addValue('contribution_recur_id', $recur['id'])
-      ->addValue('financial_type_id', $recur['financial_type_id'])
-      ->addValue('total_amount', $amount)
-      ->addValue('currency', $currency)
-    // Failed.
-      ->addValue('contribution_status_id', 4)
-      ->addValue('invoice_id', $invoiceId)
-      ->addValue('source', 'Square Invoice Failed (Webhook)')
-      ->execute();
-
-    CRM_Core_Payment_SquareDebugLogger::log("Square IPN: Created Failed contribution for invoice {$invoiceId}.");
   }
 
   /**

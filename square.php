@@ -15,6 +15,32 @@ use Civi\Api4\CustomGroup;
 use Civi\Api4\CustomField;
 
 /**
+ * Minimum PHP version this extension requires.
+ *
+ * Composer.json's "php" constraint only governs `composer install`; it is
+ * never checked at enable/upgrade time, so a site could still enable this
+ * extension on an older, unsupported PHP — CiviCRM 6.16 itself still
+ * supports PHP 8.1.
+ */
+const SQUARE_MIN_PHP_VERSION = '8.2.0';
+
+/**
+ * Abort enable/upgrade with a clear error if running on an unsupported PHP.
+ *
+ * @throws \CRM_Core_Exception
+ */
+function _square_assert_php_version(): void {
+  if (version_compare(PHP_VERSION, SQUARE_MIN_PHP_VERSION, '<')) {
+    throw new CRM_Core_Exception(
+      \CRM_Square_ExtensionUtil::ts('The Square payment processor extension requires PHP %1 or newer; this site is running PHP %2.', [
+        1 => SQUARE_MIN_PHP_VERSION,
+        2 => PHP_VERSION,
+      ])
+    );
+  }
+}
+
+/**
  * Implements hook_civicrm_config().
  */
 function square_civicrm_config(\CRM_Core_Config $config): void {
@@ -25,6 +51,7 @@ function square_civicrm_config(\CRM_Core_Config $config): void {
  * Implements hook_civicrm_install().
  */
 function square_civicrm_install(): void {
+  _square_assert_php_version();
   _square_civix_civicrm_install();
 }
 
@@ -59,6 +86,7 @@ function square_civicrm_uninstall(): void {
  * Implements hook_civicrm_enable().
  */
 function square_civicrm_enable(): void {
+  _square_assert_php_version();
   _square_civix_civicrm_enable();
 }
 
