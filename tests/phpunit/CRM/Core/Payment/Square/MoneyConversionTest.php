@@ -25,7 +25,7 @@ class CRM_Core_Payment_Square_MoneyConversionTest extends CRM_Core_Payment_Squar
     });
 
     $processor = $this->processorWithMockClient(['payments' => $paymentsMock]);
-    $params = ['token' => 'cnon:x', 'amount' => $dollars];
+    $params = ['token' => 'cnon:x', 'amount' => $dollars, 'invoiceID' => 'inv-money'];
     $processor->doPayment($params);
 
     $this->assertSame($expectedCents, $captured->getAmountMoney()->getAmount());
@@ -48,7 +48,10 @@ class CRM_Core_Payment_Square_MoneyConversionTest extends CRM_Core_Payment_Squar
     $params = ['token' => 'cnon:zero', 'amount' => '0.00'];
     $result = $processor->doPayment($params);
 
-    $this->assertSame($params, $result);
+    // Reported complete, as CRM_Core_Payment::doPayment() does for $0.
+    $this->assertSame('Completed', $result['payment_status']);
+    $this->assertSame(1, $result['payment_status_id']);
+    $this->assertArrayNotHasKey('trxn_id', $result);
   }
 
   public function testRefundRejectsZeroAmount(): void {

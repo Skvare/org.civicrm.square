@@ -65,10 +65,38 @@ class CRM_Core_Payment_Square_RequestShapeTest extends CRM_Core_Payment_Square_S
     });
 
     $processor = $this->processorWithMockClient(['payments' => $paymentsMock]);
-    $params = ['token' => 'cnon:no-invoice', 'amount' => '5.00'];
+    $params = ['token' => 'cnon:no-invoice', 'amount' => '5.00', 'contributionID' => 17];
     $processor->doPayment($params);
 
     $this->assertNull($captured->getReferenceId());
+  }
+
+  public function testOneTimePaymentFailsClosedWithoutACheckoutReference(): void {
+    $paymentsMock = $this->createMock(PaymentsClient::class);
+    $paymentsMock->expects($this->never())->method('create');
+
+    $processor = $this->processorWithMockClient(['payments' => $paymentsMock]);
+    $params = ['token' => 'cnon:no-reference', 'amount' => '5.00'];
+
+    // A retry could not be recognized without one, so it is never charged.
+    $this->expectException(CRM_Core_Exception::class);
+    $this->expectExceptionMessage('without a CiviCRM invoice or contribution reference');
+    $processor->doPayment($params);
+  }
+
+  public function testAuthorizedButUncapturedPaymentIsReportedPending(): void {
+    $paymentsMock = $this->createMock(PaymentsClient::class);
+    $paymentsMock->method('create')->willReturn(
+      new CreatePaymentResponse(['payment' => new Payment(['id' => 'pay_held', 'status' => 'APPROVED'])])
+    );
+
+    $processor = $this->processorWithMockClient(['payments' => $paymentsMock]);
+    $params = ['token' => 'cnon:held', 'amount' => '5.00', 'invoiceID' => 'inv-held'];
+    $result = $processor->doPayment($params);
+
+    $this->assertSame('Pending', $result['payment_status']);
+    $this->assertSame(2, $result['payment_status_id']);
+    $this->assertSame('pay_held', $result['trxn_id']);
   }
 
   public function testRefundRequestShape(): void {

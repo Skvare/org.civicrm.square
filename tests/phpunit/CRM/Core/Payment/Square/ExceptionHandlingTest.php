@@ -68,7 +68,7 @@ class CRM_Core_Payment_Square_ExceptionHandlingTest extends CRM_Core_Payment_Squ
 
     $this->expectException(CRM_Core_Exception::class);
     $this->expectExceptionMessageMatches('/CARD_DECLINED/');
-    $params = ['token' => 'cnon:declined', 'amount' => '10.00'];
+    $params = ['token' => 'cnon:declined', 'amount' => '10.00', 'invoiceID' => 'inv-declined'];
     $processor->doPayment($params);
   }
 
@@ -80,7 +80,7 @@ class CRM_Core_Payment_Square_ExceptionHandlingTest extends CRM_Core_Payment_Squ
 
     $this->expectException(CRM_Core_Exception::class);
     $this->expectExceptionMessage('Square API request failed: connection timed out');
-    $params = ['token' => 'cnon:timeout', 'amount' => '10.00'];
+    $params = ['token' => 'cnon:timeout', 'amount' => '10.00', 'invoiceID' => 'inv-timeout'];
     $processor->doPayment($params);
   }
 

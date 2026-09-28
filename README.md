@@ -6,7 +6,7 @@ Square payment processor extension for CiviCRM.
 - **Version:** 1.2.0 (beta)
 - **CiviCRM compatibility:** 6.16+
 - **License:** AGPL-3.0-or-later
-- **Square API version:** 2025-01-15
+- **Square API version:** 2025-10-16 (sent by the bundled `square/square` 43.2 SDK)
 - **Requires:** `mjwshared`, `civi_contribute` (see `info.xml`)
 
 ---
@@ -24,7 +24,7 @@ just enable the extension as usual (**Administer → System Settings → Extensi
 - One-time card payments via Square Payments API (`/v2/payments`)
 - Recurring contributions via Square Subscriptions API (`/v2/subscriptions`)
 - Refunds via Square Refunds API (`/v2/refunds`)
-- Subscription cancellation and amount updates synced to Square
+- Subscription cancellation synced to Square
 - Square Web Payments SDK for browser-side card tokenization — card details never pass through CiviCRM
 - Card-on-file support through CiviCRM PaymentToken
 - Square customer creation and deduplication (by email and `reference_id`)
@@ -90,7 +90,7 @@ hours; any other failure is marked `error`. See
 | `payment.updated` | Completes a one-time contribution; for a subscription payment, looks up its invoice at Square and records the installment exactly as `invoice.payment_made` does |
 | `refund.created`, `refund.updated` | Records a completed refund as a negative payment against the refunded payment |
 
-Webhook deduplication uses CiviCRM's `civicrm_paymentprocessor_webhook` queue
+Webhook deduplication uses the `civicrm_paymentprocessor_webhook` queue (provided by the mjwshared extension)
 and Square's globally unique event ID. Do not log webhook signatures, access
 tokens, card nonces, or unredacted Square responses.
 
@@ -134,7 +134,8 @@ nothing ambiguous remains.
 
 - CiviCRM native contribution pages and event registration forms
 - Drupal Webform (webform_civicrm module) billing blocks, including AJAX reloads
-- Backend contribution/event forms
+
+Back-office (staff-entered) card payments are not supported.
 
 Key globals:
 - `CRM.squarePayment` — Square's namespaced integration state
@@ -166,7 +167,7 @@ The card element mounts into `#square-card-container`. Tokenization happens on f
 |---|---|---|
 | `square_customer_map` | This extension (`CRM_Square_Upgrader`) | Maps `(contact_id, payment_processor_id)` → Square customer ID. Created on install; dropped on uninstall. |
 | `civicrm_payment_token` | CiviCRM core | Stores Square card-on-file references (one row per card), linked from `civicrm_contribution_recur.payment_token_id`. Not owned by this extension — never dropped on uninstall. |
-| `civicrm_paymentprocessor_webhook` | CiviCRM core | Webhook queue; retains deduplication, status and retry information. Not owned by this extension. |
+| `civicrm_paymentprocessor_webhook` | mjwshared extension | Webhook queue; retains deduplication, status and retry information. Not owned by this extension. |
 
 ---
 
@@ -211,8 +212,9 @@ the following:
    `{processor_id}` with the CiviCRM payment processor ID.
 4. Subscribe to the events in [Webhook Events](#webhook-events). Events not
    listed there are acknowledged but intentionally ignored.
-5. Verify that CiviCRM's **Process Pending Webhooks** scheduled job is enabled.
-   It retries queued records whose first processing attempt failed.
+5. Verify that mjwshared's **Process Payment Processor Webhooks** scheduled job
+   is enabled. It retries queued records left in status `new` by a transient
+   failure.
 6. Complete a test one-time contribution and, if recurring payments are in
    scope, a test recurring contribution. Confirm the contribution, payment
    token, recurring contribution, and webhook records in CiviCRM.

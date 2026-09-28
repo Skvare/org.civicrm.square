@@ -30,7 +30,7 @@ the CiviCRM recurring contribution.
 | Square customer mapping | `square_customer_map` | This extension |
 | Card-on-file reference | `civicrm_payment_token` | CiviCRM core |
 | Recurring contribution | `civicrm_contribution_recur` | CiviCRM core |
-| Webhook state | `civicrm_paymentprocessor_webhook` | CiviCRM core |
+| Webhook state | `civicrm_paymentprocessor_webhook` | mjwshared extension |
 
 Customer mappings use `(contact_id, payment_processor_id)`, separating
 sandbox, production, and different Square merchant accounts.

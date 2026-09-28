@@ -27,7 +27,8 @@ class CRM_Core_Payment_Square_StatusMappingTest extends CRM_Core_Payment_Square_
   public static function paymentStatusProvider(): array {
     return [
       'completed' => ['COMPLETED', 1],
-      'approved' => ['APPROVED', 1],
+      // Authorized, but not captured: not a completed payment yet.
+      'approved is still pending' => ['APPROVED', 2],
       'pending' => ['PENDING', 2],
       'processing' => ['PROCESSING', 2],
       'failed' => ['FAILED', 4],

@@ -471,7 +471,10 @@ abstract class CRM_Core_Payment_Square_SquareLedgerTestCase extends CRM_Core_Pay
    */
   protected function setUp(): void {
     parent::setUp();
-    Civi::$logged = [];
+    // Only the stand-in Civi (tests/phpunit/bootstrap.php) records log calls.
+    if (property_exists(Civi::class, 'logged')) {
+      Civi::$logged = [];
+    }
     $this->processor = $this->ledgerProcessor();
     $this->seedCheckout($this->processor);
   }

@@ -9,8 +9,14 @@ $extensionRoot = dirname(__DIR__, 2);
 
 require_once $extensionRoot . '/vendor/autoload.php';
 
-// Focused unit tests load the payment class without a full CiviCRM install.
-// The production classes supplied by CiviCRM take precedence when available.
+// Load real CiviCRM first, when a bootstrap file is given, so that its
+// classes take precedence: every stand-in below is only defined if the real
+// class is missing. Focused unit tests run without it.
+$cmsPath = getenv('CIVICRM_BOOTSTRAP_FILE');
+if ($cmsPath && file_exists($cmsPath)) {
+  require_once $cmsPath;
+}
+
 if (!class_exists('CRM_Core_Payment')) {
 
   /**
@@ -224,11 +230,4 @@ if (!class_exists('Civi')) {
     }
 
   }
-}
-
-// CiviCRM test bootstrap (if available). Not required for mock-only tests,
-// but harmless if present.
-$cmsPath = getenv('CIVICRM_BOOTSTRAP_FILE');
-if ($cmsPath && file_exists($cmsPath)) {
-  require_once $cmsPath;
 }
