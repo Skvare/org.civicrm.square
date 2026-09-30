@@ -6,6 +6,8 @@ use Square\Types\Error;
 use Square\Exceptions\SquareApiException;
 use Square\Exceptions\SquareException;
 use Square\Payments\PaymentsClient;
+use Square\Cards\CardsClient;
+use Civi\Payment\Exception\PaymentProcessorException;
 
 /**
  * Translation of Square SDK exceptions into CRM_Core_Exception.
@@ -47,7 +49,10 @@ class CRM_Core_Payment_Square_ExceptionHandlingTest extends CRM_Core_Payment_Squ
     $this->assertStringContainsString('ALSO_BAD: second problem', $message);
   }
 
-  public function testCallSquareTranslatesApiExceptionIntoCrmCoreException(): void {
+  /**
+   * @dataProvider checkoutEntryPointProvider
+   */
+  public function testCardDeclineUsesCorePaymentFailureException(string $entryPoint): void {
     $paymentsMock = $this->createMock(PaymentsClient::class);
     $paymentsMock->method('create')->willThrowException(
       $this->apiException(400, [
@@ -61,19 +66,73 @@ class CRM_Core_Payment_Square_ExceptionHandlingTest extends CRM_Core_Payment_Squ
 
     $processor = $this->processorWithMockClient(['payments' => $paymentsMock]);
 
-    $this->expectException(CRM_Core_Exception::class);
+    $this->expectException(PaymentProcessorException::class);
     $this->expectExceptionMessageMatches('/CARD_DECLINED/');
     $params = ['token' => 'cnon:declined', 'amount' => '10.00', 'invoiceID' => 'inv-declined'];
-    $processor->doPayment($params);
+    $processor->$entryPoint($params);
   }
 
-  public function testCallSquareTranslatesGenericSquareExceptionIntoCrmCoreException(): void {
+  public static function checkoutEntryPointProvider(): array {
+    return [['doPayment'], ['doDirectPayment']];
+  }
+
+  public function testCardOnFileDeclineUsesCorePaymentFailureException(): void {
+    $cards = $this->createMock(CardsClient::class);
+    $exception = $this->apiException(400, [
+      [
+        'category' => 'PAYMENT_METHOD_ERROR',
+        'code' => 'CARD_DECLINED',
+        'detail' => 'Card was declined.',
+      ],
+    ]);
+    $cards->method('create')->willThrowException($exception);
+    $processor = $this->processorWithMockClient(['cards' => $cards]);
+
+    try {
+      // Recurring checkout saves the card through this same entry point.
+      $processor->createCardOnFile('customer-1', 'cnon:declined');
+      $this->fail('A declined card must throw.');
+    }
+    catch (PaymentProcessorException $e) {
+      $this->assertSame('Your card was declined. Please use a different card.', $e->getMessage());
+      $this->assertSame($exception, $e->getPrevious());
+    }
+  }
+
+  /**
+   * @dataProvider nonDeclineErrorProvider
+   */
+  public function testOtherApiFailuresDoNotTriggerPaymentFailureCleanup(int $status, string $category, string $expectedClass): void {
+    $exception = $this->apiException($status, [
+      [
+        'category' => $category,
+        'code' => 'TEST_ERROR',
+        'detail' => 'Request failed.',
+      ],
+    ]);
+    $result = (new CRM_Square_Gateway($this->processorConfig()))->apiError($exception);
+
+    $this->assertSame($expectedClass, get_class($result));
+    $this->assertNotInstanceOf(PaymentProcessorException::class, $result);
+  }
+
+  public static function nonDeclineErrorProvider(): array {
+    return [
+      'invalid request' => [400, 'INVALID_REQUEST_ERROR', CRM_Core_Exception::class],
+      'credentials' => [401, 'AUTHENTICATION_ERROR', CRM_Core_Exception::class],
+      'rate limit' => [429, 'RATE_LIMIT_ERROR', CRM_Core_Payment_SquareRetryableException::class],
+      'server failure' => [503, 'API_ERROR', CRM_Core_Payment_SquareRetryableException::class],
+      'uncertain payment outcome' => [500, 'PAYMENT_METHOD_ERROR', CRM_Core_Payment_SquareRetryableException::class],
+    ];
+  }
+
+  public function testTransportFailureKeepsItsRetryableException(): void {
     $paymentsMock = $this->createMock(PaymentsClient::class);
     $paymentsMock->method('create')->willThrowException(new SquareException('connection timed out'));
 
     $processor = $this->processorWithMockClient(['payments' => $paymentsMock]);
 
-    $this->expectException(CRM_Core_Exception::class);
+    $this->expectException(CRM_Core_Payment_SquareRetryableException::class);
     $this->expectExceptionMessage('Square API request failed: connection timed out');
     $params = ['token' => 'cnon:timeout', 'amount' => '10.00', 'invoiceID' => 'inv-timeout'];
     $processor->doPayment($params);

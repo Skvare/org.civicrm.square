@@ -362,8 +362,9 @@ class CRM_Square_Customers {
       $response = $this->gateway->client()->cards->create(new CreateCardRequest($requestValues));
     }
     catch (SquareApiException $e) {
-      // Translate structured Square card errors into a human-friendly message.
-      throw new CRM_Core_Exception($this->translateSquareCardError($e->getErrors()));
+      // Keep the friendly message and the gateway's payment-failure type so
+      // recurring checkout runs CiviCRM's cleanup when the card is declined.
+      throw $this->gateway->apiError($e, $this->translateSquareCardError($e->getErrors()));
     }
     catch (SquareException $e) {
       throw new CRM_Core_Exception('Square API request failed: ' . $e->getMessage());

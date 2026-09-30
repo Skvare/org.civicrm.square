@@ -3,6 +3,7 @@
 use Square\SquareClient;
 use Square\Exceptions\SquareApiException;
 use Square\Exceptions\SquareException;
+use Civi\Payment\Exception\PaymentProcessorException;
 
 /**
  * Square API access for one CiviCRM Square payment processor.
@@ -165,15 +166,21 @@ class CRM_Square_Gateway {
    * HTTP 5xx and 429 are treated as transient (Square-side outage or rate
    * limiting) so webhook processing retries them; 4xx (other than 429)
    * indicates a malformed/rejected request that will fail identically on
-   * retry, so it is treated as permanent.
+   * retry, so it is treated as permanent. Payment-method rejections use
+   * PaymentProcessorException so CiviCRM checkout runs its failed-payment
+   * cleanup. Other failures do not establish that a payment was declined.
    *
    * @param \Square\Exceptions\SquareApiException $e
+   * @param string|null $message
+   *   Optional user-facing message, e.g. for a card-on-file rejection.
    *
    * @return \CRM_Core_Exception
    */
-  public function apiError(SquareApiException $e): CRM_Core_Exception {
+  public function apiError(SquareApiException $e, ?string $message = NULL): CRM_Core_Exception {
     $errorDetails = [];
+    $isPaymentMethodError = FALSE;
     foreach ($e->getErrors() as $err) {
+      $isPaymentMethodError = $isPaymentMethodError || $err->getCategory() === 'PAYMENT_METHOD_ERROR';
       $code = $err->getCode() ?: 'UNKNOWN';
       $detail = $err->getDetail() ?? '';
       $errorDetails[] = "{$code}: {$detail}";
@@ -183,10 +190,16 @@ class CRM_Square_Gateway {
     if ($errorDetails) {
       $msg .= ' ' . implode(' | ', $errorDetails);
     }
-    $exceptionClass = ($statusCode >= 500 || $statusCode === 429)
-      ? CRM_Core_Payment_SquareRetryableException::class
-      : CRM_Core_Exception::class;
-    return new $exceptionClass($msg);
+    if ($statusCode >= 500 || $statusCode === 429) {
+      $exceptionClass = CRM_Core_Payment_SquareRetryableException::class;
+    }
+    elseif ($statusCode >= 400 && $isPaymentMethodError) {
+      $exceptionClass = PaymentProcessorException::class;
+    }
+    else {
+      $exceptionClass = CRM_Core_Exception::class;
+    }
+    return new $exceptionClass($message ?? $msg, 0, [], $e);
   }
 
 }
