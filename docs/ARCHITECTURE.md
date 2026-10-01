@@ -20,9 +20,24 @@
 
 1. The processor injects Square SDK configuration and the card container into
    CiviCRM's billing block.
-2. The browser tokenizes card data and adds the payment token to the form.
+2. The browser tokenizes card data, with the buyer's details for Square's
+   buyer verification, and adds the payment token to the form.
 3. The processor sends the token to Square for payment or card-on-file work.
 4. The processor returns transaction and status data to CiviCRM.
+
+Failures are reported as CiviCRM's checkout expects:
+
+- When nothing was charged — a decline, a request Square rejected, or a
+  failure before the charge — `doPayment()` throws
+  `PaymentProcessorException`, and the checkout marks the contribution Failed
+  and deletes the recurring contribution.
+- When Square may have charged the card without confirming it (a server
+  error or timeout after the SDK's retries, an unreadable response), it
+  throws `CRM_Core_Payment_SquareOutcomeUnknownException` and logs an error to
+  check in the Square Dashboard. A contribution page keeps its Pending
+  contribution, for the `payment.updated` webhook to complete if the charge
+  went through. Event registration only handles `PaymentProcessorException`,
+  so there it is converted to one.
 
 Raw card details do not pass through CiviCRM. Recurring contributions create or
 reuse Square Catalog plans and variations, then link the Square subscription to

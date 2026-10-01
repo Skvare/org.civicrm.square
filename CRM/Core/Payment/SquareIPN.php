@@ -10,9 +10,12 @@ use Civi\Api4\PaymentprocessorWebhook;
  * Entry point: onReceiveWebhook() — called from CRM_Core_Payment_Square::handlePaymentNotification().
  *
  * Handles:
- *   subscription.created, subscription.updated, subscription.canceled
- *   invoice.created, invoice.payment_made, invoice.payment_failed
+ *   subscription.created, subscription.updated
+ *   invoice.created, invoice.payment_made, invoice.scheduled_charge_failed
  *   payment.updated, refund.created, refund.updated
+ *
+ * Square has no subscription.canceled event: a cancellation arrives as a
+ * subscription.updated whose status is CANCELED.
  *
  * Webhook lifecycle:
  *   1. onReceiveWebhook() validates the event type, deduplicates via
@@ -111,10 +114,9 @@ class CRM_Core_Payment_SquareIPN {
     return [
       'subscription.created',
       'subscription.updated',
-      'subscription.canceled',
       'invoice.created',
       'invoice.payment_made',
-      'invoice.payment_failed',
+      'invoice.scheduled_charge_failed',
       'payment.updated',
       'refund.created',
       'refund.updated',
@@ -409,16 +411,10 @@ class CRM_Core_Payment_SquareIPN {
         break;
 
       case 'subscription.updated':
+        // Also how a cancellation arrives: Square's status becomes CANCELED.
         if (!empty($this->subscription_id)) {
           $this->_paymentProcessor->syncSubscriptionFromSquare($this->subscription_id);
           CRM_Core_Payment_SquareDebugLogger::log("Square IPN: subscription.updated synced for {$this->subscription_id}");
-        }
-        break;
-
-      case 'subscription.canceled':
-        if (!empty($this->subscription_id)) {
-          $this->_paymentProcessor->syncSubscriptionCancellationFromSquare($this->subscription_id);
-          CRM_Core_Payment_SquareDebugLogger::log("Square IPN: subscription.canceled synced for {$this->subscription_id}");
         }
         break;
 
@@ -430,7 +426,7 @@ class CRM_Core_Payment_SquareIPN {
         // contribution CiviCRM created at checkout. The installment is
         // recorded once Square confirms the charge, via invoice.payment_made
         // or payment.updated (see
-        // CRM_Core_Payment_Square::recordSubscriptionInstallment()).
+        // CRM_Square_Reconciler::recordSubscriptionInstallment()).
         CRM_Core_Payment_SquareDebugLogger::log("Square IPN: invoice.created noted for invoice {$this->invoice_id} (subscription " . ($this->subscription_id ?? 'null') . '); nothing is recorded until Square confirms payment.');
         break;
 
@@ -439,7 +435,7 @@ class CRM_Core_Payment_SquareIPN {
         CRM_Core_Payment_SquareDebugLogger::log("Square IPN: invoice.payment_made processed for invoice {$this->invoice_id}");
         break;
 
-      case 'invoice.payment_failed':
+      case 'invoice.scheduled_charge_failed':
         $invoice = $obj['invoice'] ?? [];
         if (!empty($invoice)) {
           $this->_paymentProcessor->syncInvoicePaymentFailedFromSquare($invoice);

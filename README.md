@@ -27,7 +27,8 @@ just enable the extension as usual (**Administer → System Settings → Extensi
 - Subscription cancellation and amount changes synced to Square
 - Square Web Payments SDK for browser-side card tokenization — card details never pass through CiviCRM
 - Card-on-file support through CiviCRM PaymentToken
-- Square customer creation and deduplication (by email and `reference_id`)
+- Square customer creation and deduplication (by `reference_id`, then email — a customer already mapped to another contact, e.g. a family member sharing the email, is never shared)
+- Buyer verification (Strong Customer Authentication) during card tokenization
 - Webhook event handling with deduplication and delivery logging
 - Supports sandbox (test) and production environments
 
@@ -82,12 +83,11 @@ hours; any other failure is marked `error`. See
 | Event | Action |
 |---|---|
 | `subscription.created` | Syncs subscription status to `ContributionRecur` |
-| `subscription.updated` | Syncs subscription status/amount to `ContributionRecur` |
-| `subscription.canceled` | Marks `ContributionRecur` as Cancelled |
+| `subscription.updated` | Syncs subscription status/amount to `ContributionRecur`. Square has no `subscription.canceled` event: a cancellation arrives here, with status `CANCELED`, and marks the `ContributionRecur` Cancelled |
 | `invoice.created` | Nothing is recorded: the invoice is still a draft Square has not charged |
 | `invoice.payment_made` | Records the installment: completes the checkout's Pending contribution for the first invoice, or creates and completes the next contribution of the series |
-| `invoice.payment_failed` | Marks that installment's contribution Failed (the first installment's stays Pending, since Square keeps the invoice open) |
-| `payment.updated` | Completes a one-time contribution; for a subscription payment, looks up its invoice at Square and records the installment exactly as `invoice.payment_made` does |
+| `invoice.scheduled_charge_failed` | Square could not charge the card on file: marks that installment's contribution Failed (the first installment's stays Pending, since Square keeps the invoice open) |
+| `payment.updated` | Completes a one-time contribution; for a subscription payment, looks up its invoice at Square and records the installment exactly as `invoice.payment_made` does. A payment taken outside CiviCRM (Square Dashboard, Square Online, point of sale) is ignored unless **Import Square payments made outside CiviCRM** is enabled in Square Settings — and even then only at the processor's own Square location |
 | `refund.created`, `refund.updated` | Records a completed refund as a negative payment against the refunded payment |
 
 Webhook deduplication uses the `civicrm_paymentprocessor_webhook` queue (provided by the mjwshared extension)
@@ -116,13 +116,18 @@ customer/card records:
 Earlier versions of this extension stored both as a `square_data` custom
 field group on the Contact entity. `CRM_Square_Upgrader::upgrade_1000()`
 migrates that legacy data into `square_customer_map` automatically **only**
-when a contact's stored customer ID can be attributed to exactly one
-configured Square processor. If more than one Square processor is
-configured, the legacy field never recorded which one a given value
-belongs to, so migration is skipped for that data (never guessed — live is
-never assumed) and it's logged via `Civi::log()->warning()` for manual
+when exactly one live Square processor is configured (sandbox processors are
+not considered: every configured processor has one). If more than one live
+Square processor is configured, the legacy field never recorded which one a
+given value belongs to, so migration is skipped for that data (never
+guessed) and it's logged via `Civi::log()->warning()` for manual
 reconciliation. The `square_data` group itself is only removed once
 nothing ambiguous remains.
+
+When contacts are merged, the removed contact's mappings move to the
+contact kept (`square_civicrm_merge()`); where both had a Square customer on
+the same processor, the kept contact's is kept. Deleting a payment processor
+deletes its mappings.
 
 ---
 
@@ -142,7 +147,7 @@ Key globals:
 - `CRM.vars.orgUschessSquare` — processor settings (Application ID, Location ID, sandbox flag)
 - `window.civicrmSquareHandleReload` — reinitializes the card element when the billing block is replaced via AJAX
 
-The card element mounts into `#square-card-container`. Tokenization happens on form submit; the resulting nonce is written to a hidden `square_payment_token` field for PHP to read.
+The card element mounts into `#square-card-container`. Tokenization happens on form submit; the resulting nonce is written to a hidden `square_payment_token` field for PHP to read. The billing details on the form (name, email, address), amount and currency are passed to `card.tokenize()` as Square's verification details, so Square performs buyer verification (Strong Customer Authentication) as part of tokenizing — with intent `CHARGE` for a one-time payment and `STORE` for a recurring one, whose card Square's subscription charges.
 
 ---
 
@@ -179,6 +184,7 @@ CRM/
     Square.php               Payment processor adapter (CiviCRM's CRM_Core_Payment contract)
     SquareIPN.php            Webhook event router and queue processing
     SquareRetryableException.php  Marks transient failures for webhook retry
+    SquareOutcomeUnknownException.php  A checkout charge Square may have made without confirming it
     SquareDebugLogger.php    Opt-in verbose debug logging, gated by the square_ipn_debug_logging setting
   Square/
     Gateway.php              Square API access (client, errors, idempotency keys)
@@ -186,14 +192,14 @@ CRM/
     Subscriptions.php        Catalog plans/variations; subscription changes and cancellation
     Reconciler.php           Webhook-driven sync into CiviCRM's ledger
     Status.php               CiviCRM option values and Square status mappings
-    Form/Settings.php        Administer > System Settings > Square Settings (debug logging toggle)
+    Form/Settings.php        Administer > System Settings > Square Settings (debug logging, external payment import)
     Upgrader.php             Creates/backfills/drops the square_customer_map table (see Database Tables)
 js/
   square.js                  Browser-side Square Web Payments SDK integration
 managed/
   PaymentProcessorType.mgd.php  Registers the Square payment processor type
 settings/
-  Square.setting.php         Declares the square_ipn_debug_logging setting
+  Square.setting.php         Declares the square_ipn_debug_logging and square_import_external_payments settings
 templates/
   CRM/Core/Payment/Square/Card.tpl  Card container HTML injected into billing block
   CRM/Square/Form/Settings.tpl      Settings form markup

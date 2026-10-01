@@ -1,22 +1,21 @@
 {*
  * Billing block template for Square Web Payments.
  *
- * The inline <script> is a fallback for Drupal Webforms where
- * CRM_Core_Resources::addSetting() responses are not always processed
- * before square.js runs. civicrmSquareHandleReload() checks this var first.
+ * The inline <script> publishes this processor's settings for square.js.
+ * CRM_Core_Resources::addSetting() also does, but its settings are dropped
+ * when the billing block is loaded as a snippet=4 AJAX response (e.g. by
+ * Drupal Webforms). It runs synchronously, not in a CRM.$(fn) ready
+ * handler: jQuery 3 defers those, so square.js — re-run in the same AJAX
+ * response — would look for the settings before they were set.
  *
  * The #crm-payment-js-billing-form-container wrapper is required by
  * CRM.squarePayment.getBillingForm() to locate the parent <form> element.
  *}
-{literal}
 <script type="text/javascript">
-  CRM.$(function($) {
-    if (typeof CRM.vars.orgUschessSquare === 'undefined') {
-      CRM.vars.orgUschessSquare = {/literal}{$squareJSVarsJson}{literal};
-    }
-  });
+  window.CRM = window.CRM || {ldelim}{rdelim};
+  CRM.vars = CRM.vars || {ldelim}{rdelim};
+  CRM.vars.orgUschessSquare = {$squareJSVarsJson nofilter};
 </script>
-{/literal}
 {crmScope extensionKey='org.uschess.square'}
 <div id="crm-payment-js-billing-form-container" class="square-payment-container">
   <div id="square-card-container" style="display:none;"></div>

@@ -25,6 +25,40 @@ class CRM_Core_Payment_Square_RefundTest extends CRM_Core_Payment_Square_SquareL
   }
 
   /**
+   * CiviCRM recorded a refund Square accepted as PENDING, then rejected.
+   *
+   * @dataProvider refusedRefundStatusProvider
+   */
+  public function testRefusedRefundAlreadyRecordedIsReportedNotReversed(string $status): void {
+    $this->processor->payments[800] = [
+      'contribution_id' => self::SIGNUP_CONTRIBUTION_ID,
+      'trxn_id' => self::REFUND_ID,
+      'total_amount' => -19.00,
+      'payment_processor_id' => self::PROCESSOR_ID,
+    ];
+
+    $this->deliver($this->refundEvent('refund.updated', $status, 1900));
+
+    $this->assertCount(1, $this->refunds());
+    $expected = "Square refund REFUND-1 of payment " . self::FIRST['payment_id'] . " was {$status}, but CiviCRM recorded it as refunded on contribution " . self::SIGNUP_CONTRIBUTION_ID . '; reverse that refund manually.';
+    $this->assertSame([['error', $expected]], Civi::$logged);
+  }
+
+  /**
+   * @dataProvider refusedRefundStatusProvider
+   */
+  public function testRefusedRefundNeverRecordedIsIgnored(string $status): void {
+    $this->deliver($this->refundEvent('refund.updated', $status, 1900));
+
+    $this->assertSame([], $this->refunds());
+    $this->assertSame([], Civi::$logged);
+  }
+
+  public static function refusedRefundStatusProvider(): array {
+    return [['REJECTED'], ['FAILED']];
+  }
+
+  /**
    * A full refund reverses the refunded payment, as Payment.cancel does.
    */
   public function testFullRefundCancelsTheRefundedPayment(): void {

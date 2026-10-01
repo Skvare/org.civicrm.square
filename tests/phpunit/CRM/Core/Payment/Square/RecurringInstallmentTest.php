@@ -112,6 +112,8 @@ class CRM_Core_Payment_Square_RecurringInstallmentTest extends CRM_Core_Payment_
 
     $this->assertFirstInstallmentRecordedOnce();
     $this->assertSame(0.93, $this->processor->contributions[self::SIGNUP_CONTRIBUTION_ID]['fee_amount']);
+    // On the payment too, so CiviCRM's recalculation from payments keeps it.
+    $this->assertSame(0.93, reset($this->processor->payments)['fee_amount']);
   }
 
   /**
@@ -391,7 +393,7 @@ class CRM_Core_Payment_Square_RecurringInstallmentTest extends CRM_Core_Payment_
    * A failed first charge leaves the checkout's contribution Pending — no Failed duplicate.
    */
   public function testFailedFirstChargeKeepsTheCheckoutContributionPending(): void {
-    $this->deliver($this->invoicePaymentFailedEvent(self::FIRST));
+    $this->deliver($this->invoiceScheduledChargeFailedEvent(self::FIRST));
 
     $this->assertCount(1, $this->seriesContributions());
     $this->assertSame('Pending', $this->processor->contributions[self::SIGNUP_CONTRIBUTION_ID]['status']);
@@ -408,7 +410,7 @@ class CRM_Core_Payment_Square_RecurringInstallmentTest extends CRM_Core_Payment_
   public function testFailedLaterInstallmentIsCompletedWhenCollected(): void {
     $this->payFirstInstallment();
 
-    $this->deliver($this->invoicePaymentFailedEvent(self::SECOND));
+    $this->deliver($this->invoiceScheduledChargeFailedEvent(self::SECOND));
     $this->assertCount(2, $this->seriesContributions());
     $failed = $this->seriesContributions()[1];
     $this->assertSame('Failed', $failed['status']);

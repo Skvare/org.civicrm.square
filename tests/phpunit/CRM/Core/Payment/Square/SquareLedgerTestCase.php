@@ -18,6 +18,8 @@ use Square\Types\GetOrderResponse;
 use Square\Orders\OrdersClient;
 use Square\Types\SearchInvoicesResponse;
 use Square\Invoices\InvoicesClient;
+use Square\Subscriptions\SubscriptionsClient;
+use Square\Types\GetSubscriptionResponse;
 use Square\SquareClient;
 
 /**
@@ -133,15 +135,6 @@ class CRM_Core_Payment_Square_FakeLedgerProcessor extends CRM_Core_Payment_Squar
        */
       public function ensureSquareCustomer(array $params) {
         return 'CUSTOMER-1';
-      }
-
-      /**
-       * @param string $customerID
-       *
-       * @return string|null
-       */
-      public function findSquareCustomerById($customerID) {
-        return $customerID;
       }
 
       /**
@@ -466,6 +459,37 @@ class CRM_Core_Payment_Square_FakeLedgerReconciler extends CRM_Square_Reconciler
   }
 
   /**
+   * @param int $financialTrxnId
+   * @param float $fee
+   * @param float $totalAmount
+   */
+  protected function updatePaymentFee(int $financialTrxnId, float $fee, float $totalAmount): void {
+    $this->ledger->payments[$financialTrxnId]['fee_amount'] = $fee;
+  }
+
+  /**
+   * @param int $recurId
+   * @param array $values
+   */
+  protected function updateRecur(int $recurId, array $values): void {
+    $this->ledger->recurs[$recurId] = $values + $this->ledger->recurs[$recurId];
+  }
+
+  /**
+   * @param string $refundId
+   *
+   * @return array|null
+   */
+  protected function findRecordedRefund(string $refundId): ?array {
+    foreach ($this->ledger->payments as $id => $payment) {
+      if ($payment['trxn_id'] === $refundId && $payment['total_amount'] < 0) {
+        return ['id' => $id, 'contribution_id' => $payment['contribution_id']];
+      }
+    }
+    return NULL;
+  }
+
+  /**
    * @param array $params
    */
   protected function recordRefundPayment(array $params): void {
@@ -558,6 +582,13 @@ abstract class CRM_Core_Payment_Square_SquareLedgerTestCase extends CRM_Core_Pay
   protected array $squareInvoices = [];
 
   /**
+   * Subscriptions at (mocked) Square, by ID.
+   *
+   * @var \Square\Types\Subscription[]
+   */
+  protected array $squareSubscriptions = [];
+
+  /**
    * Square orders returned by the mocked orders->get, by order ID.
    *
    * @var \Square\Types\Order[]
@@ -607,9 +638,15 @@ abstract class CRM_Core_Payment_Square_SquareLedgerTestCase extends CRM_Core_Pay
       'order' => $this->squareOrders[$request->getOrderId()] ?? NULL,
     ]));
 
+    $subscriptions = $this->createMock(SubscriptionsClient::class);
+    $subscriptions->method('get')->willReturnCallback(fn ($request) => new GetSubscriptionResponse([
+      'subscription' => $this->squareSubscriptions[$request->getSubscriptionId()] ?? NULL,
+    ]));
+
     $client = new SquareClient(token: 'test-token', options: ['baseUrl' => 'https://example.invalid']);
     $client->invoices = $invoices;
     $client->orders = $orders;
+    $client->subscriptions = $subscriptions;
     $config = $this->processorConfig($configOverrides + ['id' => self::PROCESSOR_ID]);
     return new CRM_Core_Payment_Square_FakeLedgerProcessor($config, $client);
   }
@@ -697,14 +734,17 @@ abstract class CRM_Core_Payment_Square_SquareLedgerTestCase extends CRM_Core_Pay
   }
 
   /**
-   * An invoice.payment_failed payload.
+   * An invoice.scheduled_charge_failed payload.
+   *
+   * Square's event for a card-on-file charge of a subscription invoice that
+   * failed; the invoice stays UNPAID.
    *
    * @param array $installment
    *
    * @return array
    */
-  protected function invoicePaymentFailedEvent(array $installment): array {
-    return $this->invoiceEvent('invoice.payment_failed', $installment, 'UNPAID', 0);
+  protected function invoiceScheduledChargeFailedEvent(array $installment): array {
+    return $this->invoiceEvent('invoice.scheduled_charge_failed', $installment, 'UNPAID', 0);
   }
 
   /**

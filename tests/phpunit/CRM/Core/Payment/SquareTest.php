@@ -1,5 +1,6 @@
 <?php
 
+use Civi\Payment\Exception\PaymentProcessorException;
 use Square\Types\Money;
 use Square\Types\PaymentRefund;
 use Square\Types\RefundPaymentResponse;
@@ -72,28 +73,104 @@ class CRM_Core_Payment_SquareTest extends TestCase {
     $this->assertNotSame($same, $sandbox->key('payment', 'invoice-123'));
   }
 
-  public function testRefundReturnsCiviRefundStatus(): void {
+  /**
+   * @dataProvider acceptedRefundStatusProvider
+   */
+  public function testRefundReturnsCiviRefundStatus(string $squareStatus): void {
+    $processor = $this->refundingProcessor($squareStatus);
+    $params = ['trxn_id' => 'payment-1', 'amount' => '12.34', 'currency' => 'USD'];
+
+    $result = $processor->doRefund($params);
+
+    // mjwshared's refund form records the refund only for 'Completed'.
+    $this->assertSame('Completed', $result['refund_status']);
+    $this->assertSame('refund-1', $result['refund_trxn_id']);
+    $this->assertSame(0, $result['fee_amount']);
+    $this->assertSame('2026-09-30 12:00:00', date('Y-m-d H:i:s', strtotime($result['trxn_date'])));
+  }
+
+  public static function acceptedRefundStatusProvider(): array {
+    return [
+      'completed' => ['COMPLETED'],
+      'pending, as Square first reports a card refund' => ['PENDING'],
+    ];
+  }
+
+  /**
+   * @dataProvider refusedRefundStatusProvider
+   */
+  public function testRefundSquareDidNotAcceptIsAPaymentFailure(string $squareStatus): void {
+    $processor = $this->refundingProcessor($squareStatus);
+    $params = ['trxn_id' => 'payment-1', 'amount' => '12.34'];
+
+    $this->expectException(PaymentProcessorException::class);
+    $this->expectExceptionMessage("Status: {$squareStatus}");
+    $processor->doRefund($params);
+  }
+
+  public static function refusedRefundStatusProvider(): array {
+    return [['REJECTED'], ['FAILED']];
+  }
+
+  public function testBuildFormNeverPublishesTheAccessToken(): void {
+    $processor = $this->processor(['signature' => NULL]);
+    $form = new class() {
+
+      /**
+       * @var array
+       */
+      public array $assigned = [];
+
+      public function elementExists($name) {
+        return TRUE;
+      }
+
+      public function assign($name, $value) {
+        $this->assigned[$name] = $value;
+      }
+
+    };
+
+    $processor->buildForm($form);
+
+    $this->assertStringNotContainsString('access-token', $form->assigned['squareJSVarsJson']);
+    $this->assertSame('', json_decode($form->assigned['squareJSVarsJson'], TRUE)['locationId']);
+  }
+
+  /**
+   * A processor whose Square refund comes back with the given status.
+   */
+  private function refundingProcessor(string $squareStatus): CRM_Core_Payment_Square {
     $config = $this->processorConfig();
-    $processor = new class('live', $config) extends CRM_Core_Payment_Square {
+    return new class('live', $config, $squareStatus) extends CRM_Core_Payment_Square {
+
+      /**
+       * @var string
+       */
+      private string $squareStatus;
+
+      public function __construct($mode, array &$paymentProcessor, string $squareStatus) {
+        parent::__construct($mode, $paymentProcessor);
+        $this->squareStatus = $squareStatus;
+      }
+
+      protected function getRefundContext(string $paymentTrxnId): array {
+        return ['USD', 0];
+      }
 
       protected function createRefund(RefundPaymentRequest $request) {
         return new RefundPaymentResponse([
           'refund' => new PaymentRefund([
             'id' => 'refund-1',
             'locationId' => 'location-1',
-            'status' => 'COMPLETED',
+            'status' => $this->squareStatus,
             'amountMoney' => new Money(['amount' => 1234, 'currency' => 'USD']),
+            'createdAt' => '2026-09-30T12:00:00Z',
           ]),
         ]);
       }
 
     };
-    $params = ['trxn_id' => 'payment-1', 'amount' => '12.34', 'currency' => 'USD'];
-
-    $result = $processor->doRefund($params);
-
-    $this->assertSame('COMPLETED', $result['refund_status']);
-    $this->assertSame('refund-1', $result['refund_trxn_id']);
   }
 
   private function processorConfig(array $overrides = []): array {

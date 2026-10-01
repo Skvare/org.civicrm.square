@@ -350,6 +350,87 @@
         locationId:  cfg.locationId    || window.squareLocationId    || '',
         isSandbox:   !!(cfg.isSandbox  || window.squareIsSandbox),
         processorId: cfg.id ? parseInt(cfg.id) : null,
+        currency:    cfg.currency || 'USD',
+        countryIsoCodes: cfg.countryIsoCodes || {},
+      };
+    },
+
+    /**
+     * Value of the first form field whose name matches, if any.
+     *
+     * CiviCRM names billing fields e.g. billing_city-5 (5 being the billing
+     * location type); webforms wrap names in submitted[...].
+     */
+    fieldValue: function(pattern) {
+      var form = CRM.squarePayment.form;
+      if (!form) return '';
+      for (var i = 0; i < form.elements.length; i++) {
+        var el = form.elements[i];
+        if (!el.name || !pattern.test(el.name)) continue;
+        if ((el.type === 'radio' || el.type === 'checkbox') && !el.checked) continue;
+        if (el.tagName === 'SELECT') {
+          return el.selectedIndex > 0 || el.value ? { value: el.value, text: (el.options[el.selectedIndex] || {}).text || '' } : '';
+        }
+        return (el.value || '').trim();
+      }
+      return '';
+    },
+
+    /**
+     * Whether this checkout sets up a recurring payment.
+     */
+    isRecurring: function() {
+      var form = CRM.squarePayment.form;
+      if (!form) return false;
+      if ($(form).find('input[name="is_recur"]:checked, input[type="hidden"][name="is_recur"][value="1"]').length) return true;
+      if ($(form).find('input[name="auto_renew"]:checked, input[type="hidden"][name="auto_renew"][value="1"]').length) return true;
+      // Webform CiviCRM: a frequency other than "one-time" (0).
+      var frequency = script.fieldValue(/contribution_frequency_unit\]?$/);
+      frequency = typeof frequency === 'object' ? frequency.value : frequency;
+      return !!frequency && frequency !== '0';
+    },
+
+    /**
+     * Buyer details Square uses to verify the buyer (Strong Customer Authentication).
+     *
+     * Square performs the verification while tokenizing, and the token
+     * carries it: nothing more is sent to CiviCRM. A recurring checkout only
+     * stores the card (Square's subscription charges it), so its intent is
+     * STORE.
+     */
+    getVerificationDetails: function(totalAmount) {
+      var cfg = script.getConfig();
+      var text = function(value) {
+        return typeof value === 'object' ? value.text : value;
+      };
+      var contact = {};
+      var givenName = script.fieldValue(/(^|\[|_)billing_first_name(\]|$)/) || script.fieldValue(/first_name\]?$/);
+      var familyName = script.fieldValue(/(^|\[|_)billing_last_name(\]|$)/) || script.fieldValue(/last_name\]?$/);
+      var email = script.fieldValue(/^email-(\d+|Primary)$/) || script.fieldValue(/email(-\d+)?\]?$/);
+      var street = script.fieldValue(/billing_street_address(-\d+)?\]?$/);
+      var street2 = script.fieldValue(/billing_supplemental_address_1(-\d+)?\]?$/);
+      var city = script.fieldValue(/billing_city(-\d+)?\]?$/);
+      var state = script.fieldValue(/billing_state_province(_id)?(-\d+)?\]?$/);
+      var postalCode = script.fieldValue(/billing_postal_code(-\d+)?\]?$/);
+      var country = script.fieldValue(/billing_country(_id)?(-\d+)?\]?$/);
+      if (givenName) contact.givenName = givenName;
+      if (familyName) contact.familyName = familyName;
+      if (email) contact.email = email;
+      if (street) contact.addressLines = street2 ? [street, street2] : [street];
+      if (city) contact.city = city;
+      if (state && text(state)) contact.state = text(state);
+      if (postalCode) contact.postalCode = postalCode;
+      if (country) {
+        var countryCode = typeof country === 'object' ? cfg.countryIsoCodes[country.value] : country;
+        if (countryCode && /^[A-Za-z]{2}$/.test(countryCode)) contact.countryCode = countryCode.toUpperCase();
+      }
+      return {
+        amount: Number(totalAmount || 0).toFixed(2),
+        billingContact: contact,
+        currencyCode: CRM.squarePayment.getCurrency(cfg.currency),
+        intent: script.isRecurring() ? 'STORE' : 'CHARGE',
+        customerInitiated: true,
+        sellerKeyedIn: false
       };
     },
 
@@ -479,15 +560,17 @@
 
       CRM.squarePayment.addSupportForCiviDiscount();
 
-      // Webform-specific wiring
+      // Webform-specific wiring. Namespaced, and unbound first, because the
+      // billing block (and so this) is reloaded whenever the processor or
+      // amount changes.
       if (CRM.squarePayment.getIsDrupalWebform()) {
         // Store which submit button was clicked so the op hidden field is set
-        $('[type=submit]').click(function() {
+        $('[type=submit]', CRM.squarePayment.form).off('click.squareWebform').on('click.squareWebform', function() {
           CRM.squarePayment.addDrupalWebformActionElement(this.value);
         });
         // Enter key on webform should also trigger our submit
-        CRM.squarePayment.form.addEventListener('keydown', function(keydownEvent) {
-          if (keydownEvent.code === 'Enter') {
+        $(CRM.squarePayment.form).off('keydown.squareWebform').on('keydown.squareWebform', function(keydownEvent) {
+          if (keydownEvent.key === 'Enter' && keydownEvent.target.tagName !== 'TEXTAREA') {
             CRM.squarePayment.addDrupalWebformActionElement(keydownEvent.target.value || '');
             script.submit(keydownEvent);
           }
@@ -600,7 +683,7 @@
       }
 
       try {
-        var result = await script.card.tokenize();
+        var result = await script.card.tokenize(script.getVerificationDetails(totalAmount));
         if (!result || result.status !== 'OK') {
           var message = ts('Your card could not be processed. Please check your details.');
           if (result && result.errors && result.errors.length) {

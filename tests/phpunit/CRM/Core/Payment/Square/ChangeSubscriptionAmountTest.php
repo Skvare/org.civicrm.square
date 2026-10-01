@@ -38,6 +38,17 @@ class CRM_Core_Payment_Square_ChangeSubscriptionAmountTest extends CRM_Core_Paym
   }
 
   /**
+   * The form passes the amount as typed, thousands separator and all.
+   */
+  public function testFormattedAmountIsAccepted(): void {
+    $message = '';
+
+    $this->processor()->changeSubscriptionAmount($message, $this->formParams(['amount' => '1,250.50']));
+
+    $this->assertSame(125050, $this->updates[0]->getSubscription()->getPriceOverrideMoney()->getAmount());
+  }
+
+  /**
    * CiviCRM would save new installments Square cannot apply.
    */
   public function testInstallmentChangeIsRefused(): void {

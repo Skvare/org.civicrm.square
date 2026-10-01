@@ -11,9 +11,15 @@ https://your-site.example/civicrm/payment/ipn/{processor_id}
 Replace `{processor_id}` with the CiviCRM payment processor ID. Use the Square
 application and signature key for the same sandbox or production environment.
 Subscribe to: `subscription.created`, `subscription.updated`,
-`subscription.canceled`, `invoice.created`, `invoice.payment_made`,
-`invoice.payment_failed`, `payment.updated`, `refund.created`, and
-`refund.updated`.
+`invoice.created`, `invoice.payment_made`, `invoice.scheduled_charge_failed`,
+`payment.updated`, `refund.created`, and `refund.updated`.
+
+Square has no `subscription.canceled` or `invoice.payment_failed` event,
+although earlier versions of this extension listed them. A cancellation
+arrives as `subscription.updated` with status `CANCELED`, and a failed charge
+of a subscription invoice as `invoice.scheduled_charge_failed`. Check that
+existing webhook subscriptions include `invoice.scheduled_charge_failed`:
+without it, failed renewals are never recorded in CiviCRM.
 
 `invoice.payment_made` is the preferred confirmation of a paid subscription
 installment, because the invoice names its subscription. Check that existing

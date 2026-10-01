@@ -8,11 +8,6 @@
       "type": "payment"
     }
   },
-  "autoload": {
-    "psr-4": {
-      "CRM\\": "CRM/"
-    }
-  },
   "license": "AGPL-3.0-or-later",
   "config": {
     "platform": {
@@ -32,11 +27,6 @@
   "support": {
     "issues": "https://github.com/Skvare/org.uschess.square/issues",
     "source": "https://github.com/Skvare/org.uschess.square"
-  },
-  "autoload-dev": {
-    "psr-4": {
-      "CRM\\Tests\\": "tests/"
-    }
   },
   "require": {
     "php": ">=8.2",

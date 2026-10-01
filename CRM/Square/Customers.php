@@ -13,7 +13,6 @@ use Square\Types\CustomerFilter;
 use Square\Types\CustomerTextFilter;
 use Square\Customers\Requests\CreateCustomerRequest;
 use Square\Customers\Requests\UpdateCustomerRequest;
-use Square\Customers\Requests\GetCustomersRequest;
 use Square\Customers\Requests\SearchCustomersRequest;
 use Square\Cards\Requests\CreateCardRequest;
 
@@ -40,59 +39,6 @@ class CRM_Square_Customers {
    */
   public function __construct(CRM_Square_Gateway $gateway) {
     $this->gateway = $gateway;
-  }
-
-  /**
-   * Look up an existing Square customer by email.
-   *
-   * @param string $email
-   *   Customer email address.
-   *
-   * @return string|null
-   */
-  protected function findSquareCustomerByEmail($email) {
-    if (empty($email)) {
-      return NULL;
-    }
-
-    $response = $this->gateway->call(fn (SquareClient $client) => $client->customers->search(new SearchCustomersRequest([
-      'query' => new CustomerQuery([
-        'filter' => new CustomerFilter([
-          'emailAddress' => new CustomerTextFilter(['exact' => $email]),
-        ]),
-      ]),
-    ])));
-
-    $customers = $response->getCustomers();
-    if (!empty($customers[0])) {
-      return $customers[0]->getId();
-    }
-
-    return NULL;
-  }
-
-  /**
-   * Look up an existing Square customer by ID.
-   *
-   * @param string $customerID
-   *   Square customer ID.
-   *
-   * @return string|null
-   */
-  public function findSquareCustomerById($customerID) {
-    if (empty($customerID)) {
-      return NULL;
-    }
-
-    $response = $this->gateway->call(fn (SquareClient $client) => $client->customers->get(
-      new GetCustomersRequest(['customerId' => $customerID])
-    ));
-    $customer = $response->getCustomer();
-    if (!empty($customer) && !empty($customer->getId())) {
-      return $customer->getId();
-    }
-
-    return NULL;
   }
 
   /**
@@ -131,16 +77,15 @@ class CRM_Square_Customers {
   }
 
   /**
-   * Ensure a Square customer exists for this contact. Also handles storing card_id if available.
+   * Ensure a Square customer exists for this contact, saving any submitted card.
    *
-   * 1. Check for a stored Square Customer ID in a custom field.
-   * 2. If none exists, check for existing Square customer by email.
-   * 3. If still none, create a new customer in Square.
-   * 4. Persist the new customer ID back to the contact.
-   * 5. If card token/nonce is present in $params, create and store the card_id as well.
+   * The customer is, in order: the one already mapped to the contact for
+   * this payment processor; an existing Square customer adopted for it (see
+   * adoptSquareCustomer()); or a new one.
    *
    * @param array $params
-   *   Contribution params (includes contactID/contact_id).
+   *   Contribution params (includes contactID/contact_id, and the card
+   *   token as square_payment_token).
    *
    * @return string
    *   Square customer ID.
@@ -148,164 +93,158 @@ class CRM_Square_Customers {
    * @throws CRM_Core_Exception
    */
   public function ensureSquareCustomer(array $params) {
-    $contactID = $params['contactID'] ?? $params['contact_id'] ?? NULL;
+    $contactID = (int) ($params['contactID'] ?? $params['contact_id'] ?? 0);
     if (!$contactID) {
       throw new CRM_Core_Exception('Missing contactID in params for Square recurring payment.');
     }
 
-    $contactID = (int) $contactID;
+    $customerId = $this->getSquareCustomerId($contactID)
+      ?? $this->adoptSquareCustomer($contactID)
+      ?? $this->createSquareCustomer($contactID);
+    CRM_Core_Payment_SquareDebugLogger::log("Square customer for contact {$contactID}: {$customerId}");
 
-    // 1. Check if we already have a stored Square Customer ID.
-    if ($customerId = $this->getSquareCustomerId($contactID)) {
-      CRM_Core_Payment_SquareDebugLogger::log('Square customer already exists for contact ' . $contactID . ': ' . $customerId);
-      // If a fresh card token/nonce was submitted (e.g. a returning donor
-      // entering a new card), attach and store it. Card nonces are
-      // single-use, so this must be the only place that redeems it.
-      $cardNonce = $params['square_payment_token']
-        ?? $params['payment_token']
-        ?? $params['token']
-        ?? NULL;
-      if (!empty($cardNonce)) {
-        $this->createCardOnFile($customerId, $cardNonce, $params, $contactID);
-      }
-      return $customerId;
+    // Card nonces are single-use, so this must be the only place that
+    // redeems it (e.g. a returning donor entering a new card).
+    $cardNonce = self::cardNonce($params);
+    if ($cardNonce) {
+      $this->createCardOnFile($customerId, $cardNonce, $params, $contactID);
     }
-    // Migration logic: check whether this contact already exists in Square based on reference_id.
-    // If Square already has a customer with reference_id == Civi contact ID, we adopt that one.
-    try {
-      $lookupResponse = $this->gateway->call(fn (SquareClient $client) => $client->customers->search(new SearchCustomersRequest([
-        'query' => new CustomerQuery([
-          'filter' => new CustomerFilter([
-            'referenceId' => new CustomerTextFilter(['exact' => (string) $contactID]),
-          ]),
-        ]),
+    return $customerId;
+  }
+
+  /**
+   * The card token submitted with the payment, if any.
+   *
+   * @param array $params
+   *
+   * @return string|null
+   */
+  public static function cardNonce(array $params): ?string {
+    $nonce = $params['square_payment_token'] ?? $params['payment_token'] ?? $params['token'] ?? NULL;
+    return empty($nonce) ? NULL : (string) $nonce;
+  }
+
+  /**
+   * Map an existing Square customer to a contact that has none for this processor.
+   *
+   * Candidates are Square customers whose reference_id is the contact's ID
+   * (as this extension sets it), then those with the contact's email. A
+   * candidate already mapped to another contact on this processor is never
+   * shared: family members often share one email address, and each gets a
+   * Square customer of their own.
+   *
+   * @param int $contactID
+   *
+   * @return string|null
+   *   The Square customer ID now mapped to the contact, or NULL if there
+   *   was none to adopt.
+   *
+   * @throws CRM_Core_Exception
+   */
+  protected function adoptSquareCustomer(int $contactID): ?string {
+    $candidates = $this->searchSquareCustomers(new CustomerFilter([
+      'referenceId' => new CustomerTextFilter(['exact' => (string) $contactID]),
+    ]));
+    $email = $this->getContactDetails($contactID)['email'] ?? NULL;
+    if ($email) {
+      $candidates = array_merge($candidates, $this->searchSquareCustomers(new CustomerFilter([
+        'emailAddress' => new CustomerTextFilter(['exact' => $email]),
       ])));
-      $migratedCustomers = $lookupResponse->getCustomers();
-      if (!empty($migratedCustomers[0])) {
-        $migratedCustomerId = $migratedCustomers[0]->getId();
-        // Check if another Civi contact already mapped to this customerId
-        // (for this payment processor).
-        $existingContactId = CRM_Core_DAO::singleValueQuery(
-          'SELECT contact_id FROM square_customer_map WHERE square_customer_id = %1 AND payment_processor_id = %2',
-          [1 => [$migratedCustomerId, 'String'], 2 => [$this->gateway->processorId(), 'Integer']]
-        );
-
-        if (!empty($existingContactId) && (int) $existingContactId !== $contactID) {
-          throw new CRM_Core_Exception(
-            "Square customer {$migratedCustomerId} already mapped to a different CiviCRM contact ({$existingContactId})."
-          );
-        }
-
-        // Store mapping if safe.
-        $this->saveSquareCustomerId($contactID, $migratedCustomerId);
-
-        // If a card token is present, attach card to this existing Square customer.
-        $cardNonce = $params['square_payment_token']
-          ?? $params['payment_token']
-          ?? $params['token']
-          ?? NULL;
-
-        if (!empty($cardNonce)) {
-          $this->createCardOnFile($migratedCustomerId, $cardNonce, $params, $contactID);
-        }
-
-        return $migratedCustomerId;
-      }
-    }
-    catch (\Throwable $e) {
-      CRM_Core_Payment_SquareDebugLogger::log('Square migration lookup error: ' . $e->getMessage());
-    }
-    $existingCustomerId = $this->getSquareCustomerId($contactID);
-    if (!empty($existingCustomerId)) {
-      // If card token/nonce is present, create and store card_id.
-      $cardNonce = $params['square_payment_token']
-        ?? $params['payment_token']
-        ?? $params['token']
-        ?? NULL;
-      if (!empty($cardNonce)) {
-        $this->createCardOnFile($existingCustomerId, $cardNonce, $params, $contactID);
-      }
-      return $existingCustomerId;
     }
 
-    // Load contact email.
-    $contact = Contact::get(FALSE)
-      ->addWhere('id', '=', $contactID)
-      ->addSelect('email')
-      ->execute()
-      ->first();
-
-    $email = $contact['email'] ?? NULL;
-
-    // Check for existing Square customer by email.
-    $squareCustomerByEmail = $this->findSquareCustomerByEmail($email);
-
-    if (!empty($squareCustomerByEmail)) {
-      // Check if mapped to another contact (for this payment processor).
-      $existingContactId = CRM_Core_DAO::singleValueQuery(
-        'SELECT contact_id FROM square_customer_map WHERE square_customer_id = %1 AND payment_processor_id = %2',
-        [1 => [$squareCustomerByEmail, 'String'], 2 => [$this->gateway->processorId(), 'Integer']]
-      );
-
-      if (!empty($existingContactId) && (int) $existingContactId !== $contactID) {
-        throw new CRM_Core_Exception('This email address is already associated with a different Square customer in our system.');
+    foreach (array_unique($candidates) as $candidateId) {
+      $mappedContactId = $this->getMappedContactId($candidateId);
+      if ($mappedContactId !== NULL && $mappedContactId !== $contactID) {
+        continue;
       }
-
-      // Save mapping if none existed previously.
-      $this->saveSquareCustomerId($contactID, $squareCustomerByEmail);
-      // If card token/nonce is present, create and store card_id.
-      $cardNonce = $params['square_payment_token']
-        ?? $params['payment_token']
-        ?? $params['token']
-        ?? NULL;
-      if (!empty($cardNonce)) {
-        $this->createCardOnFile($squareCustomerByEmail, $cardNonce, $params, $contactID);
+      $mapped = $this->saveSquareCustomerId($contactID, $candidateId);
+      if ($mapped !== NULL) {
+        CRM_Core_Payment_SquareDebugLogger::log("Square: adopted existing Square customer {$mapped} for contact {$contactID}.");
+        return $mapped;
       }
-      return $squareCustomerByEmail;
     }
+    return NULL;
+  }
 
-    // 2. Load contact info from CiviCRM using API4 for customer creation.
-    $contactInfo = Contact::get(FALSE)
-      ->addWhere('id', '=', $contactID)
-      ->addSelect('first_name', 'last_name', 'email')
-      ->execute()
-      ->first();
-
-    if (empty($contactInfo)) {
+  /**
+   * Create a Square customer for a contact, and map it to the contact.
+   *
+   * @param int $contactID
+   *
+   * @return string
+   *   The Square customer ID mapped to the contact.
+   *
+   * @throws CRM_Core_Exception
+   */
+  protected function createSquareCustomer(int $contactID): string {
+    $contact = $this->getContactDetails($contactID);
+    if (empty($contact)) {
       throw new CRM_Core_Exception("Unable to load contact {$contactID} for Square customer creation.");
     }
 
-    $firstName = $contactInfo['first_name'] ?? NULL;
-    $lastName = $contactInfo['last_name'] ?? NULL;
-    $email = $contactInfo['email'] ?? NULL;
-
     $createResponse = $this->gateway->call(fn (SquareClient $client) => $client->customers->create(new CreateCustomerRequest([
-      'givenName' => $firstName,
-      'familyName' => $lastName,
-      'emailAddress' => $email,
+      'givenName' => $contact['first_name'] ?: NULL,
+      'familyName' => $contact['last_name'] ?: NULL,
+      'emailAddress' => $contact['email'] ?: NULL,
       'referenceId' => (string) $contactID,
     ])));
-
     $newCustomer = $createResponse->getCustomer();
     if (empty($newCustomer) || empty($newCustomer->getId())) {
       throw new CRM_Core_Exception('Failed to create Square customer.');
     }
 
-    $customerId = $newCustomer->getId();
-
-    // 3. Persist the customer ID mapping for this contact + processor.
-    $this->saveSquareCustomerId($contactID, $customerId);
-
-    // If card token/nonce is present, create and store card_id.
-    $cardNonce = $params['square_payment_token']
-      ?? $params['payment_token']
-      ?? $params['token']
-      ?? NULL;
-    if (!empty($cardNonce)) {
-      $this->createCardOnFile($customerId, $cardNonce, $params, $contactID);
+    // A concurrent checkout for the same contact may have mapped one first.
+    $mapped = $this->saveSquareCustomerId($contactID, $newCustomer->getId());
+    if ($mapped === NULL) {
+      throw new CRM_Core_Exception("Square customer {$newCustomer->getId()} could not be mapped to contact {$contactID}.");
     }
+    return $mapped;
+  }
 
-    return $customerId;
+  /**
+   * IDs of the Square customers matching a filter.
+   *
+   * @param \Square\Types\CustomerFilter $filter
+   *
+   * @return string[]
+   *
+   * @throws CRM_Core_Exception
+   */
+  protected function searchSquareCustomers(CustomerFilter $filter): array {
+    $response = $this->gateway->call(fn (SquareClient $client) => $client->customers->search(new SearchCustomersRequest([
+      'query' => new CustomerQuery(['filter' => $filter]),
+    ])));
+    $ids = [];
+    foreach ($response->getCustomers() ?? [] as $customer) {
+      if ($customer->getId()) {
+        $ids[] = $customer->getId();
+      }
+    }
+    return $ids;
+  }
+
+  /**
+   * A contact's name and primary email.
+   *
+   * @param int $contactID
+   *
+   * @return array|null
+   *   first_name, last_name and email; NULL if there is no such contact.
+   */
+  protected function getContactDetails(int $contactID): ?array {
+    $contact = Contact::get(FALSE)
+      ->addWhere('id', '=', $contactID)
+      ->addSelect('first_name', 'last_name', 'email_primary.email')
+      ->execute()
+      ->first();
+    if (!$contact) {
+      return NULL;
+    }
+    return [
+      'first_name' => $contact['first_name'] ?? NULL,
+      'last_name' => $contact['last_name'] ?? NULL,
+      'email' => $contact['email_primary.email'] ?? NULL,
+    ];
   }
 
   /**
@@ -316,7 +255,8 @@ class CRM_Square_Customers {
    * @param string $cardNonce
    *   Token from Web Payments SDK.
    * @param array $params
-   *   Additional parameters, possibly including verification_token.
+   *   Payment params: billing address fields, names, email, and
+   *   contributionRecurID.
    * @param int|null $contactId
    *   CiviCRM contact ID (optional, but required to record a PaymentToken).
    *
@@ -331,17 +271,9 @@ class CRM_Square_Customers {
     }
 
     $cardValues = ['customerId' => $customerId];
-
-    // Add billing address if available.
-    if (!empty($params['billing_address'])) {
-      $cardValues['billingAddress'] = new Address([
-        'addressLine1' => $params['billing_address']['street_address'] ?? NULL,
-        'addressLine2' => $params['billing_address']['street_address_2'] ?? NULL,
-        'locality' => $params['billing_address']['city'] ?? NULL,
-        'administrativeDistrictLevel1' => $params['billing_address']['state'] ?? NULL,
-        'postalCode' => $params['billing_address']['postal_code'] ?? NULL,
-        'country' => $this->mapCountryCode($params['billing_address']['country'] ?? 'US'),
-      ]);
+    $billingAddress = $this->billingAddress($params);
+    if ($billingAddress) {
+      $cardValues['billingAddress'] = $billingAddress;
     }
 
     $requestValues = [
@@ -353,11 +285,10 @@ class CRM_Square_Customers {
       'sourceId' => $cardNonce,
       'card' => new Card($cardValues),
     ];
-    // Square requires verification_token for AVS/SCA under certain conditions.
-    if (!empty($params['verification_token'])) {
-      $requestValues['verificationToken'] = $params['verification_token'];
-    }
 
+    // No verificationToken: buyer verification (Strong Customer
+    // Authentication) happens when js/square.js tokenizes the card, so the
+    // token itself carries it.
     try {
       $response = $this->gateway->client()->cards->create(new CreateCardRequest($requestValues));
     }
@@ -418,27 +349,58 @@ class CRM_Square_Customers {
   }
 
   /**
-   * Map country to standardized 2-letter country code.
+   * The card's billing address, from the checkout's billing fields.
+   *
+   * CiviCRM submits them as billing_street_address-{location type ID} etc.;
+   * its checkout also maps them to street_address, city, state_province (an
+   * abbreviation), postal_code and country (an ISO code).
+   *
+   * @param array $params
+   *
+   * @return \Square\Types\Address|null
+   *   NULL if no address was submitted.
    */
-  protected function mapCountryCode($country) {
-    // Standardize country codes/names.
-    $countryMap = [
-      'US' => 'US',
-      'USA' => 'US',
-      'UNITED STATES' => 'US',
-      'UNITED STATES OF AMERICA' => 'US',
-      'CA' => 'CA',
-      'CANADA' => 'CA',
-      'GB' => 'GB',
-      'UK' => 'GB',
-      'UNITED KINGDOM' => 'GB',
-    ];
+  protected function billingAddress(array $params): ?Address {
+    $value = static function (string $field) use ($params): ?string {
+      if (isset($params[$field]) && is_scalar($params[$field]) && trim((string) $params[$field]) !== '') {
+        return trim((string) $params[$field]);
+      }
+      foreach ($params as $key => $fieldValue) {
+        if (is_scalar($fieldValue) && trim((string) $fieldValue) !== '' && preg_match('/^billing_' . preg_quote($field, '/') . '-\d+$/', (string) $key)) {
+          return trim((string) $fieldValue);
+        }
+      }
+      return NULL;
+    };
 
-    // Normalize input.
-    $normalizedCountry = strtoupper(trim($country));
+    $street = $value('street_address');
+    $city = $value('city');
+    $postalCode = $value('postal_code');
+    if ($street === NULL && $city === NULL && $postalCode === NULL) {
+      return NULL;
+    }
 
-    // Return mapped country or default to US.
-    return $countryMap[$normalizedCountry] ?? 'US';
+    $state = $value('state_province');
+    $stateId = $value('state_province_id');
+    if ($stateId && ctype_digit($stateId)) {
+      $state = CRM_Core_PseudoConstant::stateProvinceAbbreviation((int) $stateId) ?: $state;
+    }
+    $country = $value('country');
+    $countryId = $value('country_id');
+    if ($countryId && ctype_digit($countryId)) {
+      $country = CRM_Core_PseudoConstant::countryIsoCode()[(int) $countryId] ?? $country;
+    }
+    // Square wants an ISO 3166 alpha-2 code; send none rather than a guess.
+    $country = ($country !== NULL && preg_match('/^[A-Za-z]{2}$/', $country)) ? strtoupper($country) : NULL;
+
+    return new Address(array_filter([
+      'addressLine1' => $street,
+      'addressLine2' => $value('supplemental_address_1'),
+      'locality' => $city,
+      'administrativeDistrictLevel1' => $state,
+      'postalCode' => $postalCode,
+      'country' => $country,
+    ], fn ($fieldValue) => $fieldValue !== NULL));
   }
 
   /**
@@ -518,18 +480,38 @@ class CRM_Square_Customers {
   }
 
   /**
+   * The contact a Square customer is mapped to on this processor, if any.
+   *
+   * @param string $customerId
+   *
+   * @return int|null
+   */
+  protected function getMappedContactId(string $customerId): ?int {
+    $contactId = CRM_Core_DAO::singleValueQuery(
+      'SELECT contact_id FROM square_customer_map WHERE square_customer_id = %1 AND payment_processor_id = %2',
+      [1 => [$customerId, 'String'], 2 => [$this->gateway->processorId(), 'Integer']]
+    );
+    return $contactId === NULL ? NULL : (int) $contactId;
+  }
+
+  /**
    * Save the Square customer ID for a contact and processor.
    *
    * See getSquareCustomerId().
    *
    * @param int $contactId
    * @param string $customerId
+   *
+   * @return string|null
+   *   The customer the contact is mapped to afterwards — another one if the
+   *   contact already had one — or NULL if $customerId belongs to another
+   *   contact, so the contact still has none.
    */
-  protected function saveSquareCustomerId($contactId, $customerId) {
+  protected function saveSquareCustomerId($contactId, $customerId): ?string {
     $contactId = (int) $contactId;
     $processorId = $this->gateway->processorId();
     if ($contactId <= 0 || $processorId <= 0 || empty($customerId)) {
-      return;
+      return NULL;
     }
 
     // An existing mapping is never re-pointed (e.g. by two concurrent
@@ -544,11 +526,12 @@ class CRM_Square_Customers {
     );
     $mappedCustomerId = $this->getSquareCustomerId($contactId);
     if ($mappedCustomerId === NULL) {
-      Civi::log()->warning("Square: Square customer {$customerId} is already mapped to another contact on payment processor {$processorId}; not mapping it to contact {$contactId}.");
+      Civi::log('square')->warning("Square: Square customer {$customerId} is already mapped to another contact on payment processor {$processorId}; not mapping it to contact {$contactId}.");
     }
     elseif ($mappedCustomerId !== (string) $customerId) {
-      Civi::log()->warning("Square: contact {$contactId} is already mapped to Square customer {$mappedCustomerId} on payment processor {$processorId}; not re-mapping it to {$customerId}.");
+      Civi::log('square')->warning("Square: contact {$contactId} is already mapped to Square customer {$mappedCustomerId} on payment processor {$processorId}; not re-mapping it to {$customerId}.");
     }
+    return $mappedCustomerId;
   }
 
 }
