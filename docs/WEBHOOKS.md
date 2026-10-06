@@ -16,7 +16,9 @@ Subscribe to: `subscription.created`, `subscription.updated`,
 
 Square has no `subscription.canceled` or `invoice.payment_failed` event,
 although earlier versions of this extension listed them. A cancellation
-arrives as `subscription.updated` with status `CANCELED`, and a failed charge
+arrives as `subscription.updated` with a `canceled_date` (the end of the
+period already paid for; the status stays `ACTIVE` until then, and Square may
+send no further webhook when it becomes `CANCELED`), and a failed charge
 of a subscription invoice as `invoice.scheduled_charge_failed`. Check that
 existing webhook subscriptions include `invoice.scheduled_charge_failed`:
 without it, failed renewals are never recorded in CiviCRM.

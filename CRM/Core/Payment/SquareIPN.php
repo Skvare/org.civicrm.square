@@ -15,7 +15,8 @@ use Civi\Api4\PaymentprocessorWebhook;
  *   payment.updated, refund.created, refund.updated
  *
  * Square has no subscription.canceled event: a cancellation arrives as a
- * subscription.updated whose status is CANCELED.
+ * subscription.updated with a canceled_date, while its status is still
+ * ACTIVE.
  *
  * Webhook lifecycle:
  *   1. onReceiveWebhook() validates the event type, deduplicates via
@@ -411,7 +412,7 @@ class CRM_Core_Payment_SquareIPN {
         break;
 
       case 'subscription.updated':
-        // Also how a cancellation arrives: Square's status becomes CANCELED.
+        // Also how a cancellation arrives: Square sets a canceled_date.
         if (!empty($this->subscription_id)) {
           $this->_paymentProcessor->syncSubscriptionFromSquare($this->subscription_id);
           CRM_Core_Payment_SquareDebugLogger::log("Square IPN: subscription.updated synced for {$this->subscription_id}");

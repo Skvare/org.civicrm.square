@@ -1285,7 +1285,8 @@ class CRM_Square_Reconciler {
    *
    * Called for subscription.created and subscription.updated webhooks.
    * Square has no subscription.canceled event: a cancellation arrives as a
-   * subscription.updated whose status is CANCELED.
+   * subscription.updated with a canceled_date, while its status is still
+   * ACTIVE (see applySubscriptionToRecur()).
    *
    * @param string $squareSubscriptionId
    *   The subscription ID from Square.
@@ -1341,6 +1342,15 @@ class CRM_Square_Reconciler {
     $updates = [];
     if (!empty($amount) && (float) $amount !== (float) $recur['amount']) {
       $updates['amount'] = (float) $amount;
+    }
+
+    // A subscription cancelled in Square stays ACTIVE (or PENDING or PAUSED)
+    // until its canceled_date, the end of the period already paid for, and
+    // Square may send no webhook when it then becomes CANCELED. So the
+    // canceled_date is itself the cancellation; no further invoices follow.
+    if ($canceledDate && in_array(strtoupper($squareStatus), ['ACTIVE', 'PENDING', 'PAUSED'], TRUE)) {
+      CRM_Core_Payment_SquareDebugLogger::log("Square: subscription for contribution_recur {$recurId} is {$squareStatus} but cancelled as of {$canceledDate}; treating it as CANCELED.");
+      $squareStatus = 'CANCELED';
     }
 
     $mappedStatus = CRM_Square_Status::mapSubscriptionStatus($squareStatus);
