@@ -50,7 +50,9 @@ CIVICRM_UF=UnitTests /path/to/org.uschess.square/vendor/bin/phpunit \
   --configuration /path/to/org.uschess.square/tests/phpunit-headless/phpunit.xml.dist
 ```
 
-Not yet covered: browser tests of the card form.
+Not yet covered: automated tests of `js/square.js` and browser tests of the
+card form (including keeping its ZIP/postal code in step with the billing
+address's).
 
 ## Release build
 

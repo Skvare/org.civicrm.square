@@ -24,8 +24,9 @@ just enable the extension as usual (**Administer → System Settings → Extensi
 - One-time card payments via Square Payments API (`/v2/payments`)
 - Recurring contributions via Square Subscriptions API (`/v2/subscriptions`)
 - Refunds via Square Refunds API (`/v2/refunds`)
-- Subscription cancellation and amount changes synced to Square
+- Subscription cancellation and amount changes synced to Square, and cancellations made in Square synced back to CiviCRM
 - Square Web Payments SDK for browser-side card tokenization — card details never pass through CiviCRM
+- Card form ZIP/postal code kept in step with the billing address's, so Square never sees two different ones
 - Card-on-file support through CiviCRM PaymentToken
 - Square customer creation and deduplication (by `reference_id`, then email — a customer already mapped to another contact, e.g. a family member sharing the email, is never shared)
 - Buyer verification (Strong Customer Authentication) during card tokenization
@@ -56,11 +57,18 @@ Separate sandbox credentials are supported for test mode. The processor automati
 | DAILY | Every day |
 | WEEKLY | Every week |
 | EVERY_TWO_WEEKS | Every 2 weeks |
+| THIRTY_DAYS | Every 30 days |
+| SIXTY_DAYS | Every 60 days |
+| NINETY_DAYS | Every 90 days |
 | MONTHLY | Every month |
 | EVERY_TWO_MONTHS | Every 2 months |
 | QUARTERLY | Every 3 months |
+| EVERY_FOUR_MONTHS | Every 4 months |
 | EVERY_SIX_MONTHS | Every 6 months |
 | ANNUAL | Every year |
+| EVERY_TWO_YEARS | Every 2 years |
+
+A CiviCRM frequency with no Square equivalent (for example every 3 weeks) can't be billed by Square, and is refused at checkout before any card is saved.
 
 Recurring payments use the Square Catalog API to create subscription plans and plan variations on demand, then create a Square Subscription linked to a card-on-file. The subscription starts immediately and Square itself charges every installment, including the first — no separate charge is made at checkout. The checkout's contribution stays Pending until Square confirms that first charge by webhook, which then completes that same contribution; each later installment becomes a new contribution (via `Contribution.repeattransaction`) completed the same way. All payments are recorded with CiviCRM's `Payment.create`, and the Square payment ID becomes the contribution's and the payment's transaction ID.
 
@@ -83,7 +91,7 @@ hours; any other failure is marked `error`. See
 | Event | Action |
 |---|---|
 | `subscription.created` | Syncs subscription status to `ContributionRecur` |
-| `subscription.updated` | Syncs subscription status/amount to `ContributionRecur`. Square has no `subscription.canceled` event: a cancellation arrives here, with status `CANCELED`, and marks the `ContributionRecur` Cancelled |
+| `subscription.updated` | Syncs subscription status/amount to `ContributionRecur`. Square has no `subscription.canceled` event: a cancellation arrives here with a `canceled_date` (the status stays `ACTIVE` until that date), and marks the `ContributionRecur` Cancelled |
 | `invoice.created` | Nothing is recorded: the invoice is still a draft Square has not charged |
 | `invoice.payment_made` | Records the installment: completes the checkout's Pending contribution for the first invoice, or creates and completes the next contribution of the series |
 | `invoice.scheduled_charge_failed` | Square could not charge the card on file: marks that installment's contribution Failed (the first installment's stays Pending, since Square keeps the invoice open) |
@@ -148,6 +156,8 @@ Key globals:
 - `window.civicrmSquareHandleReload` — reinitializes the card element when the billing block is replaced via AJAX
 
 The card element mounts into `#square-card-container`. Tokenization happens on form submit; the resulting nonce is written to a hidden `square_payment_token` field for PHP to read. The billing details on the form (name, email, address), amount and currency are passed to `card.tokenize()` as Square's verification details, so Square performs buyer verification (Strong Customer Authentication) as part of tokenizing — with intent `CHARGE` for a one-time payment and `STORE` for a recurring one, whose card Square's subscription charges.
+
+The card form's ZIP/postal code and the billing address's (`billing_postal_code-N`) are kept in step: the card form starts with the billing postal code and is updated (via `card.configure()`) whenever the donor changes it, an empty billing postal code is filled in as the donor types one in the card form, and submit is stopped with an error if the two still differ.
 
 ---
 

@@ -13,15 +13,18 @@
 | `CRM/Core/Payment/SquareIPN.php` | Webhook filtering, deduplication, queue persistence, and processing. |
 | `CRM/Core/Payment/SquareDebugLogger.php` | Opt-in diagnostic logging. |
 | `CRM/Square/Upgrader.php` | Schema creation, migration, and cleanup. |
-| `js/square.js` | Browser card element and tokenization. |
+| `js/square.js` | Browser card element and tokenization; keeps the card form's postal code in step with the billing address's. |
 | `managed/PaymentProcessorType.mgd.php` | Payment processor type registration. |
 
 ## Payment flow
 
 1. The processor injects Square SDK configuration and the card container into
    CiviCRM's billing block.
-2. The browser tokenizes card data, with the buyer's details for Square's
-   buyer verification, and adds the payment token to the form.
+2. The browser checks that the card form's postal code matches the billing
+   address's, tokenizes card data, with the buyer's details for Square's
+   buyer verification, and adds the payment token to the form. (Square's
+   CreateCard rejects a card whose billing address postal code differs from
+   the card form's, with "Invalid card data.")
 3. The processor sends the token to Square for payment or card-on-file work.
 4. The processor returns transaction and status data to CiviCRM.
 
