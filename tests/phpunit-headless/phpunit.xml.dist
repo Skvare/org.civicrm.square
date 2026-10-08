@@ -1,0 +1,26 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Headless integration tests, against a real CiviCRM.
+
+  Only for a civibuild (buildkit) site, whose CIVICRM_UF=UnitTests
+  configuration points at a dedicated test database: Civi\Test::headless()
+  drops every table in that database before the run. Never run this on a
+  site whose database you need. See docs/DEVELOPMENT.md.
+-->
+<phpunit
+  bootstrap="bootstrap.php"
+  colors="true"
+  backupGlobals="false"
+  convertWarningsToExceptions="true"
+  convertErrorsToExceptions="true"
+  convertNoticesToExceptions="true"
+>
+  <testsuites>
+    <testsuite name="Square Extension Headless Tests">
+      <directory>./CRM</directory>
+    </testsuite>
+  </testsuites>
+  <php>
+    <env name="CIVICRM_UF" value="UnitTests"/>
+  </php>
+</phpunit>

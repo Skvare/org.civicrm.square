@@ -31,6 +31,4 @@ return array(
     'DeepCopy\\' => array($vendorDir . '/myclabs/deep-copy/src/DeepCopy'),
     'Core\\' => array($vendorDir . '/apimatic/core/src'),
     'CoreInterfaces\\' => array($vendorDir . '/apimatic/core-interfaces/src'),
-    'CRM\\Tests\\' => array($baseDir . '/tests'),
-    'CRM\\' => array($baseDir . '/CRM'),
 );

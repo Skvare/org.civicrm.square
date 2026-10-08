@@ -54,18 +54,21 @@ class CRM_Core_Payment_Square_ConfigurationTest extends CRM_Core_Payment_Square_
   }
 
   public function testApiBaseUrlDefaultsToSandboxInTestMode(): void {
-    $processor = $this->processor(['is_test' => TRUE]);
-    $this->assertSame('https://connect.squareupsandbox.com', $this->callMethod($processor, 'getApiBaseUrl'));
+    $gateway = new CRM_Square_Gateway($this->processorConfig(['is_test' => TRUE]));
+    $this->assertSame('https://connect.squareupsandbox.com', $this->callMethod($gateway, 'getApiBaseUrl'));
   }
 
   public function testApiBaseUrlDefaultsToLiveOutsideTestMode(): void {
-    $processor = $this->processor(['is_test' => FALSE]);
-    $this->assertSame('https://connect.squareup.com', $this->callMethod($processor, 'getApiBaseUrl'));
+    $gateway = new CRM_Square_Gateway($this->processorConfig(['is_test' => FALSE]));
+    $this->assertSame('https://connect.squareup.com', $this->callMethod($gateway, 'getApiBaseUrl'));
   }
 
   public function testApiBaseUrlHonorsConfiguredOverrideEvenInTestMode(): void {
-    $processor = $this->processor(['is_test' => TRUE, 'url_api' => 'https://example-override.test/']);
-    $this->assertSame('https://example-override.test', $this->callMethod($processor, 'getApiBaseUrl'));
+    $gateway = new CRM_Square_Gateway($this->processorConfig([
+      'is_test' => TRUE,
+      'url_api' => 'https://example-override.test/',
+    ]));
+    $this->assertSame('https://example-override.test', $this->callMethod($gateway, 'getApiBaseUrl'));
   }
 
   public function testBuildSquareClientReturnsASquareClientForEitherEnvironment(): void {

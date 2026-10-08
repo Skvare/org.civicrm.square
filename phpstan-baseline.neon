@@ -1,0 +1,31 @@
+parameters:
+	ignoreErrors:
+		-
+			message: "#^Call to an undefined method CRM_Core_Form\\:\\:elementExists\\(\\)\\.$#"
+			count: 1
+			path: CRM/Core/Payment/Square.php
+
+		-
+			message: "#^Constructor of class CRM_Core_Payment_Square has an unused parameter \\$mode\\.$#"
+			count: 1
+			path: CRM/Core/Payment/Square.php
+
+		-
+			message: "#^Negated boolean expression is always false\\.$#"
+			count: 1
+			path: CRM/Core/Payment/Square.php
+
+		-
+			message: "#^Expression on left side of \\?\\? is not nullable\\.$#"
+			count: 1
+			path: CRM/Square/Customers.php
+
+		-
+			message: "#^Call to an undefined method CRM_Square_Form_Settings\\:\\:exportValues\\(\\)\\.$#"
+			count: 1
+			path: CRM/Square/Form/Settings.php
+
+		-
+			message: "#^Ternary operator condition is always true\\.$#"
+			count: 1
+			path: CRM/Square/Gateway.php

@@ -32,7 +32,6 @@
   <civix>
     <namespace>CRM/Square</namespace>
     <format>25.10.2</format>
-    <angularModule>crmSquare</angularModule>
   </civix>
   <upgrader>CRM_Square_Upgrader</upgrader>
   <mixins>
@@ -44,6 +43,5 @@
   </mixins>
   <classloader>
     <psr0 prefix="CRM_" path="."/>
-    <psr4 prefix="Civi\" path="Civi"/>
   </classloader>
 </extension>

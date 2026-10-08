@@ -1,43 +1,19 @@
 <?php
 
 use CRM_Square_ExtensionUtil as E;
-use Civi\Api4\Contribution;
-use Civi\Api4\Contact;
 use Civi\Api4\ContributionRecur;
+use Civi\Api4\Payment;
 use Civi\Api4\PaymentToken;
 use Civi\Payment\Exception\PaymentProcessorException;
 use Civi\Payment\PropertyBag;
 use Square\SquareClient;
-use Square\Exceptions\SquareApiException;
-use Square\Exceptions\SquareException;
 use Square\Types\Money;
-use Square\Types\Address;
-use Square\Types\Card;
-use Square\Types\CustomerQuery;
-use Square\Types\CustomerFilter;
-use Square\Types\CustomerTextFilter;
-use Square\Types\Subscription;
 use Square\Types\SubscriptionSource;
-use Square\Types\SubscriptionPhase;
-use Square\Types\SubscriptionPricing;
-use Square\Types\CatalogObject;
-use Square\Types\CatalogObjectBatch;
-use Square\Types\CatalogObjectSubscriptionPlan;
-use Square\Types\CatalogObjectSubscriptionPlanVariation;
-use Square\Types\CatalogSubscriptionPlan;
-use Square\Types\CatalogSubscriptionPlanVariation;
-use Square\Customers\Requests\CreateCustomerRequest;
-use Square\Customers\Requests\UpdateCustomerRequest;
-use Square\Customers\Requests\GetCustomersRequest;
-use Square\Customers\Requests\SearchCustomersRequest;
-use Square\Cards\Requests\CreateCardRequest;
 use Square\Payments\Requests\CreatePaymentRequest;
 use Square\Subscriptions\Requests\CreateSubscriptionRequest;
-use Square\Subscriptions\Requests\GetSubscriptionsRequest;
-use Square\Subscriptions\Requests\UpdateSubscriptionRequest;
-use Square\Subscriptions\Requests\CancelSubscriptionsRequest;
+use Square\Refunds\Requests\GetRefundsRequest;
 use Square\Refunds\Requests\RefundPaymentRequest;
-use Square\Catalog\Requests\BatchUpsertCatalogObjectsRequest;
+use Square\Types\PaymentRefund;
 
 require_once E::path() . '/vendor/autoload.php';
 /**
@@ -50,8 +26,25 @@ require_once E::path() . '/vendor/autoload.php';
  * Card details are never handled by CiviCRM directly. Instead, the
  * Square Web Payments SDK is used in the browser to tokenize the card
  * and pass a token/nonce back to this class via $params.
+ *
+ * This class is CiviCRM's adapter: it implements the CRM_Core_Payment
+ * contract and delegates the work to
+ *  - CRM_Square_Gateway: Square API access (client, errors, idempotency);
+ *  - CRM_Square_Customers: Square customers and cards on file;
+ *  - CRM_Square_Subscriptions: catalog plans and subscriptions;
+ *  - CRM_Square_Reconciler: webhook-driven sync into CiviCRM's ledger.
  */
 class CRM_Core_Payment_Square extends CRM_Core_Payment {
+
+  /**
+   * How many times doRefund() checks on a refund Square has not completed yet.
+   */
+  protected const REFUND_STATUS_CHECKS = 5;
+
+  /**
+   * Microseconds between those checks.
+   */
+  protected const REFUND_STATUS_CHECK_INTERVAL = 1000000;
 
   /**
    * Payment-processor instance configuration.
@@ -70,52 +63,6 @@ class CRM_Core_Payment_Square extends CRM_Core_Payment {
    *   but not every context this class runs in guarantees that.
    */
   protected $_component = 'contribute';
-
-  /**
-   * Square-supported cadence definitions.
-   */
-  protected const SQUARE_CADENCES = [
-    'DAILY' => [
-      'label' => 'Daily',
-      'unit' => 'day',
-      'step' => 1,
-    ],
-    'WEEKLY' => [
-      'label' => 'Weekly',
-      'unit' => 'week',
-      'step' => 1,
-    ],
-    'EVERY_TWO_WEEKS' => [
-      'label' => 'Every 2 Weeks',
-      'unit' => 'week',
-      'step' => 2,
-    ],
-    'MONTHLY' => [
-      'label' => 'Monthly',
-      'unit' => 'month',
-      'step' => 1,
-    ],
-    'EVERY_TWO_MONTHS' => [
-      'label' => 'Every 2 Months',
-      'unit' => 'month',
-      'step' => 2,
-    ],
-    'QUARTERLY' => [
-      'label' => 'Quarterly',
-      'unit' => 'month',
-      'step' => 3,
-    ],
-    'EVERY_SIX_MONTHS' => [
-      'label' => 'Every 6 Months',
-      'unit' => 'month',
-      'step' => 6,
-    ],
-    'ANNUAL' => [
-      'label' => 'Annual',
-      'unit' => 'year',
-      'step' => 1,
-    ],
-  ];
 
   /**
    * Constructor.
@@ -167,8 +114,14 @@ class CRM_Core_Payment_Square extends CRM_Core_Payment {
     $jsVars = [
       'id' => (int) ($this->_paymentProcessor['id'] ?? 0),
       'applicationId' => $this->_paymentProcessor['user_name'] ?? '',
-      'locationId' => $this->_paymentProcessor['signature'] ?? ($this->_paymentProcessor['password'] ?? ''),
+      // Never fall back to any other credential: everything here is
+      // published to the browser.
+      'locationId' => trim((string) ($this->_paymentProcessor['signature'] ?? '')),
       'isSandbox' => (bool) $isSandbox,
+      // For the buyer verification details js/square.js passes to Square
+      // when tokenizing the card.
+      'currency' => (method_exists($form, 'getCurrency') ? $form->getCurrency() : NULL) ?: 'USD',
+      'countryIsoCodes' => (object) CRM_Core_PseudoConstant::countryIsoCode(),
     ];
 
     // Add hidden field for the payment token.
@@ -203,6 +156,11 @@ class CRM_Core_Payment_Square extends CRM_Core_Payment {
 
     // Enable JS validation so submission only happens after fields are valid.
     $form->assign('isJsValidate', TRUE);
+
+    // We augment the standard billing block rather than replace it, so form
+    // building must continue as normal (CRM_Core_Payment::buildForm()'s
+    // contract: FALSE = "continue normal form building").
+    return FALSE;
   }
 
   /**
@@ -215,22 +173,67 @@ class CRM_Core_Payment_Square extends CRM_Core_Payment {
    * @throws \CRM_Core_Exception
    */
   protected function buildSquareClient(): SquareClient {
-    return new SquareClient(
-      token: $this->getAccessToken(),
-      options: ['baseUrl' => $this->getApiBaseUrl()],
-    );
+    return $this->gateway()->createClient();
   }
 
   /**
-   * Get the Square access token from processor config.
+   * Square API access for this processor.
    *
-   * @return string
+   * Its client comes from buildSquareClient(), so overriding that replaces
+   * the client every collaborator uses.
+   *
+   * @return \CRM_Square_Gateway
+   */
+  protected function gateway(): CRM_Square_Gateway {
+    return new CRM_Square_Gateway($this->_paymentProcessor, fn () => $this->buildSquareClient());
+  }
+
+  /**
+   * Square customers and cards on file for this processor.
+   *
+   * @return \CRM_Square_Customers
+   */
+  protected function customers(): CRM_Square_Customers {
+    return new CRM_Square_Customers($this->gateway());
+  }
+
+  /**
+   * Square subscription plans and subscriptions for this processor.
+   *
+   * @return \CRM_Square_Subscriptions
+   */
+  protected function subscriptions(): CRM_Square_Subscriptions {
+    return new CRM_Square_Subscriptions($this->gateway());
+  }
+
+  /**
+   * Webhook-driven sync of Square activity into CiviCRM for this processor.
+   *
+   * @return \CRM_Square_Reconciler
+   */
+  protected function reconciler(): CRM_Square_Reconciler {
+    return new CRM_Square_Reconciler($this->gateway());
+  }
+
+  /**
+   * Build a retry-stable idempotency key unique to each processor and environment.
+   */
+  protected function idempotencyKey(string $operation, string $reference): string {
+    return $this->gateway()->idempotencyKey($operation, $reference);
+  }
+
+  /**
+   * Invoke the Square SDK client, translating its exceptions to CRM_Core_Exception.
+   *
+   * @param callable(\Square\SquareClient): mixed $call
+   *
+   * @return mixed
+   *   Whatever $call returns (typically a Square SDK response object).
    *
    * @throws \CRM_Core_Exception
    */
-  protected function getAccessToken() {
-
-    return trim($this->_paymentProcessor['password'] ?? '');
+  protected function callSquare(callable $call) {
+    return $this->gateway()->call($call);
   }
 
   /**
@@ -241,63 +244,21 @@ class CRM_Core_Payment_Square extends CRM_Core_Payment {
    * @throws \CRM_Core_Exception
    */
   protected function getLocationId() {
-    $loc = trim($this->_paymentProcessor['signature'] ?? '');
-    if (empty($loc)) {
-      throw new CRM_Core_Exception('Square location ID is not configured on this payment processor.');
-    }
-    return $loc;
+    return $this->gateway()->getLocationId();
   }
 
   /**
-   * Base URL for Square API, depending on mode and config.
-   *
-   * @return string
+   * ID of this payment processor (civicrm_payment_processor.id).
    */
-  protected function getApiBaseUrl() {
-    // Allow overriding via processor config if provided.
-    if (!empty($this->_paymentProcessor['url_api'])) {
-      return rtrim($this->_paymentProcessor['url_api'], '/');
-    }
-
-    // Fallback: use sensible defaults based on test/live.
-    if ($this->isTestMode()) {
-      return 'https://connect.squareupsandbox.com';
-    }
-
-    return 'https://connect.squareup.com';
+  protected function processorId(): int {
+    return $this->gateway()->processorId();
   }
 
   /**
-   * Build a retry-stable idempotency key unique to each processor and environment.
-   */
-  protected function idempotencyKey(string $operation, string $reference): string {
-    $processorId = (string) ($this->_paymentProcessor['id'] ?? '0');
-    $environment = $this->isTestMode() ? 'test' : 'live';
-    return substr('civi-' . $operation . '-' . hash('sha256', implode(':', [
-      $processorId,
-      $environment,
-      $reference,
-    ])), 0, 45);
-  }
-
-  /**
-   * Resolve a contribution status without relying on installation-specific IDs. */
-  protected function contributionStatusId(string $name): int {
-    static $statuses = NULL;
-    if ($statuses === NULL) {
-      $statuses = \CRM_Contribute_PseudoConstant::contributionStatus();
-    }
-    $id = array_search($name, $statuses, TRUE);
-    if ($id === FALSE) {
-      throw new \CRM_Core_Exception("CiviCRM contribution status '{$name}' is unavailable.");
-    }
-    return (int) $id;
-  }
-
-  /**
-   * Validate Square configuration by making a real SDK call.
+   * Check every Square credential this processor needs is configured.
    *
    * @return string|null
+   *   An error message naming the missing ones, or NULL.
    */
   public function checkConfig() {
     $missing = [];
@@ -315,441 +276,48 @@ class CRM_Core_Payment_Square extends CRM_Core_Payment {
   }
 
   /**
-   * Sync a Square payment (from webhook payload) into CiviCRM.
+   * Sync a Square payment (from a payment.updated webhook) into CiviCRM.
    *
    * @param array $payment
    *   Payment object from Square webhooks.
+   *
+   * @see CRM_Square_Reconciler::syncPaymentFromSquare()
    */
   public function syncPaymentFromSquare(array $payment) {
-    $paymentId = $payment['id'] ?? NULL;
-    CRM_Core_Payment_SquareDebugLogger::log("Square syncPaymentFromSquare(): called from SquareIPN for payment_id={$paymentId}, status=" . ($payment['status'] ?? 'UNKNOWN') . ', order_id=' . ($payment['order_id'] ?? 'null'));
-    if (!$paymentId) {
-      CRM_Core_Payment_SquareDebugLogger::log('Square syncPaymentFromSquare(): missing payment ID, skipping.');
-      return;
-    }
-
-    $status = $payment['status'] ?? 'UNKNOWN';
-    $sourceType = $payment['source_type'] ?? NULL;
-
-    // Determine amount/currency.
-    $money = $payment['amount_money'] ?? NULL;
-    $feeMoney = $payment['processing_fee'][0]['amount_money']['amount'] ?? NULL;
-    $amount = $money && isset($money['amount']) ? ($money['amount'] / 100) : NULL;
-    $feeAmount = $feeMoney !== NULL ? ($feeMoney / 100) : NULL;
-    $currency = $money['currency'] ?? 'USD';
-    $orderID = $payment['order_id'] ?? NULL;
-
-    // 1. Try to find existing contribution using order id as invoice number, or by
-    // trxn_id (Square payment ID). The initial payment of a new subscription is
-    // charged directly via doPayment() and only ever gets trxn_id set (no
-    // invoice_number/invoice_id), so it must also be matched on trxn_id — otherwise
-    // every payment.updated webhook for it fails to find it, falls through to the
-    // "create new contribution" branch below, and collides with CiviCRM's own
-    // duplicate-transaction guard on trxn_id.
-    $existingQuery = Contribution::get(FALSE)
-      ->addSelect('id')
-      ->addWhere('is_test', 'IN', [TRUE, FALSE]);
-    if ($orderID !== NULL) {
-      $existingQuery->addClause('OR', ['invoice_number', '=', $orderID], ['trxn_id', '=', $paymentId]);
-    }
-    else {
-      $existingQuery->addWhere('trxn_id', '=', $paymentId);
-    }
-    $existing = $existingQuery->execute()->first();
-
-    if ($existing) {
-      CRM_Core_Payment_SquareDebugLogger::log("Square syncPaymentFromSquare(): found existing contribution {$existing['id']} for payment {$paymentId}, updating.");
-      $update = Contribution::update(FALSE)
-        ->addWhere('id', '=', $existing['id'])
-        ->addValue('total_amount', $amount)
-        ->addValue('currency', $currency)
-        ->addValue('contribution_status_id', $this->mapPaymentStatus($status))
-        ->addValue('payment_instrument_id', $this->mapPaymentInstrument($sourceType));
-      if ($feeAmount !== NULL) {
-        $update->addValue('fee_amount', $feeAmount);
-      }
-      $update->execute();
-      CRM_Core_Payment_SquareDebugLogger::log("Square syncPaymentFromSquare(): Updated existing contribution {$existing['id']} for payment {$paymentId}.");
-      return;
-    }
-
-    CRM_Core_Payment_SquareDebugLogger::log("Square syncPaymentFromSquare(): no existing contribution found for payment {$paymentId} (order_id={$orderID}), attempting to create a new one.");
-
-    // If no contribution exists, try mapping by reference_id → contact or contribution.
-    $referenceId = $payment['reference_id'] ?? NULL;
-    $contactId = NULL;
-
-    if ($referenceId && ctype_digit((string) $referenceId)) {
-      $refRecurContribution = ContributionRecur::get(FALSE)
-        ->addSelect('id', 'contact_id', 'is_test', 'financial_type_id')
-        ->addWhere('id', '=', (int) $referenceId)
-        ->addWhere('is_test', 'IN', [TRUE, FALSE])
-        ->execute()
-        ->first();
-
-      if ($refRecurContribution) {
-        $contactId = (int) $refRecurContribution['contact_id'];
-      }
-    }
-
-    if (!$contactId) {
-      $contactId = $this->findContactIdForPayment($payment);
-    }
-
-    if (!$contactId) {
-      CRM_Core_Payment_SquareDebugLogger::log("Square syncPaymentFromSquare(): cannot resolve contact for payment {$paymentId}, skipping create.");
-      return;
-    }
-
-    // Default financial type is Donation (ID=1) unless better mapping is added later.
-    $financialTypeId = 1;
-
-    $applicationId = $payment['application_details']['application_id'] ?? '';
-    $isTest = str_contains($applicationId, 'sandbox') ? 1 : 0;
-    if (!empty($refRecurContribution)) {
-      $isTest = $refRecurContribution['is_test'] ? 1 : 0;
-      $financialTypeId = $refRecurContribution['financial_type_id'] ?? $financialTypeId;
-    }
-
-    $create = Contribution::create(FALSE)
-      ->addValue('contact_id', $contactId)
-      ->addValue('financial_type_id', $financialTypeId)
-      ->addValue('total_amount', $amount)
-      ->addValue('currency', $currency)
-      ->addValue('contribution_status_id', $this->mapPaymentStatus($status))
-      ->addValue('payment_instrument_id', $this->mapPaymentInstrument($sourceType))
-      ->addValue('trxn_id', $paymentId)
-      ->addValue('is_test', $isTest)
-      ->addValue('source', 'Square Payment (Webhook)');
-    if ($feeAmount !== NULL) {
-      $create->addValue('fee_amount', $feeAmount);
-    }
-    if ($orderID !== NULL) {
-      $create->addValue('invoice_number', $orderID);
-    }
-    $newContribution = $create->execute()->first();
-    CRM_Core_Payment_SquareDebugLogger::log("Square syncPaymentFromSquare(): Created new contribution {$newContribution['id']} for payment {$paymentId}, contact {$contactId}.");
+    $this->reconciler()->syncPaymentFromSquare($payment);
   }
 
   /**
-   * Sync a Square refund into CiviCRM.
+   * Sync a Square refund (refund.created / refund.updated) into CiviCRM.
    *
    * @param array $refund
+   *
+   * @see CRM_Square_Reconciler::syncRefundFromSquare()
    */
   public function syncRefundFromSquare(array $refund) {
-    $paymentId = $refund['payment_id'] ?? NULL;
-    $refundId = $refund['id'] ?? NULL;
-    CRM_Core_Payment_SquareDebugLogger::log("Square syncRefundFromSquare(): called from SquareIPN for refund_id={$refundId}, payment_id={$paymentId}.");
-    if (!$paymentId || !$refundId) {
-      CRM_Core_Payment_SquareDebugLogger::log('Square syncRefundFromSquare(): missing payment_id or refund_id, skipping.');
-      return;
-    }
-
-    // Find contribution by trxn_id.
-    $contribution = Contribution::get(FALSE)
-      ->addSelect('id')
-      ->addWhere('trxn_id', '=', $paymentId)
-      ->addWhere('is_test', 'IN', [TRUE, FALSE])
-      ->execute()
-      ->first();
-
-    if (!$contribution) {
-      CRM_Core_Payment_SquareDebugLogger::log("Square syncRefundFromSquare(): no contribution found for payment {$paymentId}, skipping.");
-      return;
-    }
-
-    CRM_Core_Payment_SquareDebugLogger::log("Square syncRefundFromSquare(): found contribution {$contribution['id']} for payment {$paymentId}, marking Refunded.");
-
-    Contribution::update(FALSE)
-      ->addWhere('id', '=', $contribution['id'])
-      ->addValue('contribution_status_id', 'Refunded')
-      ->addValue('refund_trxn_id', $refundId)
-      ->execute();
-
-    CRM_Core_Payment_SquareDebugLogger::log("Square syncRefundFromSquare(): Updated contribution {$contribution['id']} as Refunded for refund {$refundId}.");
+    $this->reconciler()->syncRefundFromSquare($refund);
   }
 
   /**
-   * Sync a Square subscription update into CiviCRM.
-   *
-   * @param array $subscription
-   */
-  public function syncSubscriptionFromWebhook(array $subscription) {
-    $id = $subscription['id'] ?? NULL;
-    if (!$id) {
-      CRM_Core_Payment_SquareDebugLogger::log('Square syncSubscriptionFromWebhook(): missing subscription ID.');
-      return;
-    }
-
-    $status = $subscription['status'] ?? 'UNKNOWN';
-    $amount = $this->extractSubscriptionAmount($subscription);
-
-    $recur = ContributionRecur::get(FALSE)
-      ->addSelect('id', 'amount', 'contribution_status_id')
-      ->addWhere('processor_id', '=', $id)
-      ->addWhere('is_test', 'IN', [TRUE, FALSE])
-      ->execute()
-      ->first();
-
-    if (!$recur) {
-      CRM_Core_Payment_SquareDebugLogger::log("Square syncSubscriptionFromWebhook(): no matching recur for {$id}");
-      return;
-    }
-
-    $updates = [];
-    $mappedStatus = $this->mapSquareSubscriptionStatusToCivi($status);
-
-    if ($mappedStatus !== NULL) {
-      $updates['contribution_status_id'] = $mappedStatus;
-    }
-    if ($amount !== NULL && (float) $amount !== (float) $recur['amount']) {
-      $updates['amount'] = (float) $amount;
-    }
-
-    if ($updates) {
-      $q = ContributionRecur::update(FALSE)
-        ->addWhere('id', '=', $recur['id']);
-      foreach ($updates as $field => $value) {
-        $q->addValue($field, $value);
-      }
-      $q->execute();
-    }
-  }
-
-  /**
-   * Sync a Square invoice (recurring payment) into CiviCRM.
+   * Sync a paid Square subscription invoice into CiviCRM.
    *
    * @param array $invoice
+   *
+   * @see CRM_Square_Reconciler::syncInvoiceFromSquare()
    */
   public function syncInvoiceFromSquare(array $invoice) {
-    $invoiceId = $invoice['id'] ?? NULL;
-    if (!$invoiceId) {
-      CRM_Core_Payment_SquareDebugLogger::log('Square syncInvoiceFromSquare(): missing invoice ID.');
-      return;
-    }
-
-    $subscriptionId = $invoice['subscription_id'] ?? NULL;
-    if (!$subscriptionId) {
-      CRM_Core_Payment_SquareDebugLogger::log("Square syncInvoiceFromSquare(): invoice {$invoiceId} has no subscription_id.");
-      return;
-    }
-
-    // Find recur.
-    $recur = ContributionRecur::get(FALSE)
-      ->addSelect('id', 'contact_id', 'financial_type_id', 'currency', 'is_test')
-      ->addWhere('processor_id', '=', $subscriptionId)
-      ->addWhere('is_test', 'IN', [TRUE, FALSE])
-      ->execute()
-      ->first();
-
-    if (!$recur) {
-      CRM_Core_Payment_SquareDebugLogger::log("Square syncInvoiceFromSquare(): no recur for subscription {$subscriptionId}");
-      return;
-    }
-
-    // Prevent duplicates.
-    $existing = Contribution::get(FALSE)
-      ->addSelect('id')
-      ->addWhere('invoice_id', '=', $invoiceId)
-      ->addWhere('is_test', 'IN', [TRUE, FALSE])
-      ->execute()
-      ->first();
-
-    if ($existing) {
-      return;
-    }
-
-    $money = $invoice['payment_requests'][0]['computed_amount_money'] ?? NULL;
-    $amount = $money ? ($money['amount'] / 100) : NULL;
-    $currency = $money['currency'] ?? $recur['currency'] ?? 'USD';
-
-    Contribution::create(FALSE)
-      ->addValue('contact_id', $recur['contact_id'])
-      ->addValue('contribution_recur_id', $recur['id'])
-      ->addValue('financial_type_id', $recur['financial_type_id'])
-      ->addValue('total_amount', $amount)
-      ->addValue('currency', $currency)
-      ->addValue('contribution_status_id', 1)
-      ->addValue('invoice_id', $invoiceId)
-      ->addValue('is_test', $recur['is_test'])
-      ->addValue('source', 'Square Invoice (Webhook)')
-      ->execute();
+    $this->reconciler()->syncInvoiceFromSquare($invoice);
   }
 
   /**
-   * Sync a Square subscription with the corresponding CiviCRM recurring contribution.
-   *
-   * This is used when Square sends a webhook (subscription.updated or subscription.canceled)
-   * AND also may be triggered manually by scheduled jobs.
+   * Apply a Square subscription's current status and amount to its recurring contribution.
    *
    * @param string $squareSubscriptionId
-   *   The subscription ID from Square.
    *
-   * @throws \CRM_Core_Exception
+   * @see CRM_Square_Reconciler::syncSubscriptionFromSquare()
    */
   public function syncSubscriptionFromSquare(string $squareSubscriptionId) {
-    CRM_Core_Payment_SquareDebugLogger::log("Square syncSubscriptionFromSquare(): called from SquareIPN for subscription_id={$squareSubscriptionId}.");
-    if (empty($squareSubscriptionId)) {
-      throw new CRM_Core_Exception('Missing Square subscription ID for sync.');
-    }
-
-    // 1. Look up the subscription in Square
-    $response = $this->callSquare(fn (SquareClient $client) => $client->subscriptions->get(
-      new GetSubscriptionsRequest(['subscriptionId' => $squareSubscriptionId])
-    ));
-    $sub = $response->getSubscription();
-
-    if (empty($sub)) {
-      throw new CRM_Core_Exception("Square subscription {$squareSubscriptionId} not found.");
-    }
-
-    $status = $sub->getStatus() ?? 'UNKNOWN';
-    // extractSubscriptionAmount() expects the REST JSON shape; jsonSerialize()
-    // gives us that from the SDK object without duplicating the extraction logic.
-    $amount = $this->extractSubscriptionAmount($sub->jsonSerialize());
-
-    // 2. Find local CiviCRM recurring contribution
-    $recur = ContributionRecur::get(FALSE)
-      ->addWhere('processor_id', '=', $squareSubscriptionId)
-      ->addWhere('is_test', 'IN', [TRUE, FALSE])
-      ->addSelect('id', 'amount', 'currency', 'contribution_status_id')
-      ->execute()
-      ->first();
-
-    if (empty($recur)) {
-      // No such recurring record exists — log and stop.
-      CRM_Core_Payment_SquareDebugLogger::log("Square sync: No local contribution_recur record found for subscription {$squareSubscriptionId}");
-      return;
-    }
-
-    $recurId = (int) $recur['id'];
-    CRM_Core_Payment_SquareDebugLogger::log("Square syncSubscriptionFromSquare(): found contribution_recur {$recurId} for subscription {$squareSubscriptionId} (current status {$recur['contribution_status_id']}, square status {$status}).");
-
-    // 3. Map Square → CiviCRM status
-    $mappedStatus = $this->mapSquareSubscriptionStatusToCivi($status);
-
-    // 4. Update recurring amount if changed
-    $updates = [];
-    if (!empty($amount) && (float) $amount !== (float) $recur['amount']) {
-      $updates['amount'] = (float) $amount;
-    }
-
-    // 5. Update contribution_status_id if needed
-    if ($mappedStatus !== NULL && $mappedStatus !== (int) $recur['contribution_status_id']) {
-      $updates['contribution_status_id'] = $mappedStatus;
-      CRM_Core_Payment_SquareDebugLogger::log("Square sync: Status change for subscription {$squareSubscriptionId} mapped to contribution_recur {$recurId} status {$mappedStatus}");
-    }
-
-    // 6. Apply updates
-    if (!empty($updates)) {
-      $q = ContributionRecur::update(FALSE)
-        ->addWhere('id', '=', $recurId);
-      foreach ($updates as $field => $value) {
-        $q->addValue($field, $value);
-      }
-      $q->execute();
-
-      CRM_Core_Payment_SquareDebugLogger::log("Square sync: Updated recurring contribution {$recurId} from subscription {$squareSubscriptionId}");
-    }
-    else {
-      CRM_Core_Payment_SquareDebugLogger::log("Square syncSubscriptionFromSquare(): contribution_recur {$recurId} already up to date for subscription {$squareSubscriptionId}, no changes made.");
-    }
-  }
-
-  /**
-   * Map Square subscription statuses to CiviCRM contribution_status_id.
-   *
-   * @param string $squareStatus
-   *
-   * @return int|null
-   */
-  protected function mapSquareSubscriptionStatusToCivi($squareStatus) {
-    $squareStatus = strtoupper(trim($squareStatus));
-
-    // CiviCRM contribution_status_id values used by this extension for
-    // contribution_recur: 1 = Completed, 2 = Pending, 3 = Cancelled,
-    // 4 = Failed, 5 = In Progress.
-    switch ($squareStatus) {
-      case 'ACTIVE':
-        // In Progress.
-        return 5;
-
-      case 'CANCELED':
-      case 'DEACTIVATED':
-        // Cancelled.
-        return 3;
-
-      case 'SUSPENDED':
-        // Failed / On Hold.
-        return 4;
-
-      case 'PENDING':
-        // Square subscriptions report PENDING until their start_date is
-        // reached (we deliberately set start_date to tomorrow — see
-        // doRecurPayment()), even when we've already charged and recorded
-        // a successful initial payment and marked the recur In Progress.
-        // Don't let this calendar-based status downgrade a recurring
-        // record that already has a completed payment back to Pending.
-        return NULL;
-    }
-
-    // If unknown, don't change local status.
-    return NULL;
-  }
-
-  /**
-   * Extract override amount from Square subscription.
-   *
-   * @param array $subscription
-   *
-   * @return float|null
-   */
-  protected function extractSubscriptionAmount(array $subscription) {
-    if (!empty($subscription['price_override_money']['amount'])) {
-      return ((float) $subscription['price_override_money']['amount']) / 100;
-    }
-
-    // If no override, fall back to catalog plan pricing (unavailable via subscription API alone).
-    return NULL;
-  }
-
-  /**
-   * Determine financial_type_id for contributions created by Square.
-   *
-   * Priority:
-   *  1. Contribution params (financialTypeID / financial_type_id)
-   *  2. Recurring template on contribution_recur
-   *  3. System default (Donation = 1)
-   *
-   * @param array $params
-   *
-   * @return int
-   */
-  protected function getFinancialTypeId(array $params) {
-    // 1. Direct param from contribution form
-    if (!empty($params['financialTypeID'])) {
-      return (int) $params['financialTypeID'];
-    }
-    if (!empty($params['financial_type_id'])) {
-      return (int) $params['financial_type_id'];
-    }
-
-    // 2. Check recurring template if recurID provided
-    if (!empty($params['contributionRecurID'])) {
-      $recur = ContributionRecur::get(FALSE)
-        ->addWhere('id', '=', (int) $params['contributionRecurID'])
-        ->addWhere('is_test', 'IN', [TRUE, FALSE])
-        ->addSelect('financial_type_id')
-        ->execute()
-        ->first();
-
-      if (!empty($recur['financial_type_id'])) {
-        return (int) $recur['financial_type_id'];
-      }
-    }
-
-    // 3. Fallback to Donation (ID=1)
-    return 1;
+    $this->reconciler()->syncSubscriptionFromSquare($squareSubscriptionId);
   }
 
   /**
@@ -757,168 +325,54 @@ class CRM_Core_Payment_Square extends CRM_Core_Payment {
    *
    * @param array $payload
    *   Full decoded JSON from Square webhook.
+   *
+   * @see CRM_Square_Reconciler::handleInvoicePaymentCreated()
    */
   public function handleInvoicePaymentCreated(array $payload) {
-    CRM_Core_Payment_SquareDebugLogger::log('Square handleInvoicePaymentCreated(): called from SquareIPN for invoice.payment_made.');
-    if (empty($payload['data']['object']['invoice'])) {
-      CRM_Core_Payment_SquareDebugLogger::log('Square webhook: invoice.payment_made missing invoice object.');
-      return;
-    }
-
-    $invoice = $payload['data']['object']['invoice'];
-    $invoiceId = $invoice['id'] ?? NULL;
-    $subscriptionId = $invoice['subscription_id'] ?? NULL;
-
-    if (!$invoiceId) {
-      CRM_Core_Payment_SquareDebugLogger::log('Square webhook: invoice missing ID.');
-      return;
-    }
-
-    // Fix 1: guard against non-subscription invoices (same as syncInvoiceFromSquare).
-    if (!$subscriptionId) {
-      CRM_Core_Payment_SquareDebugLogger::log("Square webhook: invoice {$invoiceId} has no subscription_id, skipping.");
-      return;
-    }
-
-    // Load subscription payment info.
-    $total = $invoice['payment_requests'][0]['computed_amount_money']['amount'] ?? NULL;
-    $currency = $invoice['payment_requests'][0]['computed_amount_money']['currency'] ?? 'USD';
-
-    if ($total === NULL) {
-      CRM_Core_Payment_SquareDebugLogger::log("Square webhook: invoice {$invoiceId} missing payment amount.");
-      return;
-    }
-
-    $amount = ((float) $total) / 100;
-
-    // Fix 4: use the invoice updated_at as receive_date rather than defaulting to today.
-    $receiveDate = !empty($invoice['updated_at'])
-      ? date('Y-m-d H:i:s', strtotime($invoice['updated_at']))
-      : date('Y-m-d H:i:s');
-
-    // Find matching Civi recurring record.
-    $recur = ContributionRecur::get(FALSE)
-      ->addWhere('processor_id', '=', $subscriptionId)
-      ->addWhere('is_test', 'IN', [TRUE, FALSE])
-      ->addSelect('id', 'contact_id', 'is_test', 'payment_instrument_id')
-      ->execute()
-      ->first();
-
-    if (empty($recur)) {
-      CRM_Core_Payment_SquareDebugLogger::log("Square webhook: No matching contribution_recur for subscription {$subscriptionId}.");
-      return;
-    }
-
-    $contactId = (int) $recur['contact_id'];
-    $recurId = (int) $recur['id'];
-    $paymentInstrumentId = $recur['payment_instrument_id'] ?? 1;
-
-    // Check for duplicate contribution by invoice ID.
-    $existing = Contribution::get(FALSE)
-      ->addSelect('id', 'contribution_status_id', 'contribution_recur_id')
-      ->addWhere('invoice_id', '=', $invoiceId)
-      ->addWhere('is_test', 'IN', [TRUE, FALSE])
-      ->execute()
-      ->first();
-
-    CRM_Core_Payment_SquareDebugLogger::log($existing
-      ? "Square webhook: found existing contribution {$existing['id']} (status {$existing['contribution_status_id']}) for invoice {$invoiceId}."
-      : "Square webhook: no existing contribution found for invoice {$invoiceId}, will create a new one.");
-
-    // Check record exist and status completed and recurring is linked.
-    if (!empty($existing)) {
-      if ($existing['contribution_status_id'] == 1 && !empty($existing['contribution_recur_id'])) {
-        CRM_Core_Payment_SquareDebugLogger::log("Square webhook: Invoice {$invoiceId} already processed as contribution {$existing['id']}.");
-        return;
-      }
-      else {
-        CRM_Core_Payment_SquareDebugLogger::log("Square webhook: Updating existing contribution {$existing['id']} for invoice {$invoiceId} (subscription {$subscriptionId}).");
-        Contribution::update(FALSE)
-          ->addWhere('id', '=', $existing['id'])
-          ->addValue('total_amount', $amount)
-          ->addValue('currency', $currency)
-          ->addValue('receive_date', $receiveDate)
-          ->addValue('contribution_status_id', 1)
-          ->addValue('contribution_recur_id', $recurId)
-          ->addValue('payment_instrument_id', $paymentInstrumentId)
-          ->execute();
-        try {
-          CRM_Contribute_BAO_ContributionRecur::updateOnNewPayment($recurId, 'Completed');
-        }
-        catch (Exception $e) {
-          Civi::log()->error("Square webhook: Failed to update contribution recur {$recurId} after processing invoice {$invoiceId}: " . $e->getMessage());
-        }
-        return;
-      }
-    }
-
-    // Determine financial type ID.
-    $financialTypeId = $this->getFinancialTypeId([
-      'contributionRecurID' => $recurId,
-    ]);
-
-    // Create new completed contribution.
-    Contribution::create(FALSE)
-      ->addValue('contact_id', $contactId)
-      ->addValue('financial_type_id', $financialTypeId)
-      ->addValue('total_amount', $amount)
-      ->addValue('currency', $currency)
-      ->addValue('receive_date', $receiveDate)
-      ->addValue('contribution_recur_id', $recurId)
-      ->addValue('contribution_status_id', 1)
-      ->addValue('payment_instrument_id', $paymentInstrumentId)
-      ->addValue('invoice_id', $invoiceId)
-      ->addValue('is_test', $recur['is_test'])
-      ->addValue('source', 'Square Recurring Payment')
-      ->execute();
-
-    try {
-      CRM_Contribute_BAO_ContributionRecur::updateOnNewPayment($recurId, 'Completed');
-    }
-    catch (Exception $e) {
-      Civi::log()->error("Square webhook: Failed to update contribution recur {$recurId} after processing invoice {$invoiceId}: " . $e->getMessage());
-    }
-    CRM_Core_Payment_SquareDebugLogger::log("Square webhook: Created contribution for invoice {$invoiceId} (subscription {$subscriptionId}).");
+    $this->reconciler()->handleInvoicePaymentCreated($payload);
   }
 
   /**
-   * Handle a subscription cancellation event coming from Square.
+   * Sync a Square invoice.scheduled_charge_failed webhook event.
    *
-   * Triggered by webhook event: subscription.canceled.
+   * @param array $invoice
    *
-   * @param array $payload
-   *   Full decoded JSON body from Square webhook.
+   * @see CRM_Square_Reconciler::syncInvoicePaymentFailedFromSquare()
    */
-  public function handleSubscriptionCancelled(array $payload) {
-    if (empty($payload['data']['object']['subscription']['id'])) {
-      CRM_Core_Payment_SquareDebugLogger::log('Square webhook: subscription.canceled missing subscription ID.');
-      return;
-    }
+  public function syncInvoicePaymentFailedFromSquare(array $invoice): void {
+    $this->reconciler()->syncInvoicePaymentFailedFromSquare($invoice);
+  }
 
-    $subscriptionId = $payload['data']['object']['subscription']['id'];
+  /**
+   * Ensure a Square customer exists for this contact, saving any submitted card.
+   *
+   * @param array $params
+   *   Contribution params (includes contactID/contact_id).
+   *
+   * @return string
+   *   Square customer ID.
+   *
+   * @see CRM_Square_Customers::ensureSquareCustomer()
+   */
+  public function ensureSquareCustomer(array $params) {
+    return $this->customers()->ensureSquareCustomer($params);
+  }
 
-    // Find associated recurring contribution.
-    $recur = ContributionRecur::get(FALSE)
-      ->addWhere('processor_id', '=', $subscriptionId)
-      ->addWhere('is_test', 'IN', [TRUE, FALSE])
-      ->addSelect('id')
-      ->execute()
-      ->first();
-
-    if (empty($recur)) {
-      CRM_Core_Payment_SquareDebugLogger::log("Square webhook: No matching contribution_recur found for cancelled subscription {$subscriptionId}.");
-      return;
-    }
-
-    $recurId = (int) $recur['id'];
-
-    // Update recurring record to Cancelled (3).
-    ContributionRecur::update(FALSE)
-      ->addWhere('id', '=', $recurId)
-      ->addValue('contribution_status_id', 3)
-      ->execute();
-
-    CRM_Core_Payment_SquareDebugLogger::log("Square webhook: Marked recurring contribution {$recurId} as Cancelled for subscription {$subscriptionId}.");
+  /**
+   * Attach a card to the Square customer using the tokenized card nonce.
+   *
+   * @param string $customerId
+   * @param string $cardNonce
+   * @param array $params
+   * @param int|null $contactId
+   *
+   * @return string
+   *   Square card ID.
+   *
+   * @see CRM_Square_Customers::createCardOnFile()
+   */
+  public function createCardOnFile($customerId, $cardNonce, array $params = [], $contactId = NULL) {
+    return $this->customers()->createCardOnFile($customerId, $cardNonce, $params, $contactId);
   }
 
   /**
@@ -952,31 +406,68 @@ class CRM_Core_Payment_Square extends CRM_Core_Payment {
    */
   public function doPayment(&$params, $component = 'contribute') {
     $this->_component = $component;
-    // Determine if this is a recurring payment.
-    if (!empty($params['is_recur']) || !empty($params['contributionRecurID'])) {
-      return $this->doRecurPayment($params);
+    try {
+      // Determine if this is a recurring payment.
+      if (!empty($params['is_recur']) || !empty($params['contributionRecurID'])) {
+        return $this->doRecurPayment($params);
+      }
+      return $this->doOneTimePayment($params);
     }
-    return $this->doOneTimePayment($params);
+    catch (PaymentProcessorException $e) {
+      // Square declined the card: CiviCRM's checkout cleans up.
+      throw $e;
+    }
+    catch (CRM_Core_Payment_SquareOutcomeUnknownException $e) {
+      // Already logged. A contribution page keeps its Pending contribution
+      // for the webhook to complete; event registration only handles
+      // PaymentProcessorException, and has no contribution yet.
+      if ($component === 'event') {
+        throw new PaymentProcessorException($e->getMessage(), 0, [], $e);
+      }
+      throw $e;
+    }
+    catch (\Throwable $e) {
+      // Anything else happened before Square could charge the card (or
+      // Square rejected the request), so nothing was taken: report it as a
+      // failed payment, which CiviCRM's checkout knows how to clean up.
+      \Civi::log('square')->error('Square checkout failed: ' . $e->getMessage(), ['exception' => $e]);
+      throw new PaymentProcessorException(E::ts('Your payment could not be processed. Please try again, or contact us if the problem continues.'), 0, [], $e);
+    }
   }
 
   /**
-   * Setup a recurring payment (called by CiviCRM for initial setup).
+   * The Square Web Payments SDK card token submitted with the billing form.
    *
-   * This is called when a recurring contribution is first created.
-   * It initializes the recurring payment but doesn't charge yet.
+   * Webform CiviCRM's confirm-form path does not always merge $_POST values
+   * into payment params, so the request is the fallback.
    *
    * @param array $params
-   *   Recurring contribution parameters.
    *
-   * @return array
-   *   Updated params with subscription info.
-   *
-   * @throws \CRM_Core_Exception
+   * @return string|null
    */
-  public function doSetupRecurring(&$params) {
-    // For Square, setup is handled in doRecurPayment()
-    // This method is called by CiviCRM but we delegate to doRecurPayment.
-    return $this->doRecurPayment($params);
+  protected function getPaymentToken(array $params): ?string {
+    $token = CRM_Square_Customers::cardNonce($params)
+      ?? $_POST['square_payment_token']
+      ?? $_REQUEST['square_payment_token']
+      ?? NULL;
+    return empty($token) ? NULL : (string) $token;
+  }
+
+  /**
+   * Log, and describe to the payer, a charge Square may have made without confirming it.
+   *
+   * @param \Throwable $e
+   * @param string $reference
+   *   What was being paid, for the log.
+   *
+   * @return \CRM_Core_Payment_SquareOutcomeUnknownException
+   */
+  protected function paymentOutcomeUnknown(\Throwable $e, string $reference): CRM_Core_Payment_SquareOutcomeUnknownException {
+    \Civi::log('square')->error("Square: could not confirm the outcome of {$reference} on payment processor {$this->processorId()}; check the Square Dashboard before the payer tries again. " . $e->getMessage(), ['exception' => $e]);
+    return new CRM_Core_Payment_SquareOutcomeUnknownException(
+      E::ts('We could not confirm whether your payment went through. Please do not pay again yet: contact us so we can check.'),
+      0, [], $e
+    );
   }
 
   /**
@@ -989,16 +480,26 @@ class CRM_Core_Payment_Square extends CRM_Core_Payment {
    * @throws \CRM_Core_Exception
    */
   protected function doOneTimePayment(&$params) {
-    // 1. Extract Web Payments SDK token.
-    //    Webform CiviCRM's confirm-form path does not always merge $_POST
-    //    values into payment params, so we fall back to the request globals.
-    $token = $params['square_payment_token']
-      ?? $params['payment_token']
-      ?? $params['token']
-      ?? $_POST['square_payment_token']
-      ?? $_REQUEST['square_payment_token']
-      ?? NULL;
+    // 1. Determine amount and currency first — a zero-amount contribution
+    // (e.g. a 100%-discount code) needs no card at all, so it must not be
+    // rejected for lacking a Square token.
+    $amount = $params['amount'] ?? $params['total_amount'] ?? NULL;
+    if ($amount === NULL || $amount === '') {
+      throw new \CRM_Core_Exception('Missing contribution amount.');
+    }
 
+    if ((float) $amount === 0.0) {
+      // Nothing to charge: report it complete, as CRM_Core_Payment::doPayment()
+      // does for a zero amount, so the checkout completes the contribution.
+      $completedStatusId = CRM_Square_Status::contributionStatusId('Completed');
+      $params['payment_status_id'] = $completedStatusId;
+      $params['payment_status'] = 'Completed';
+      $params['contribution_status_id'] = $completedStatusId;
+      return $params;
+    }
+
+    // 2. Extract Web Payments SDK token.
+    $token = $this->getPaymentToken($params);
     if (!$token) {
       throw new \CRM_Core_Exception('Missing Square payment token.');
     }
@@ -1006,34 +507,31 @@ class CRM_Core_Payment_Square extends CRM_Core_Payment {
     // Persist it back into $params so downstream code can see it.
     $params['square_payment_token'] = $token;
 
-    // 2. Determine amount and currency.
-    $amount = $params['amount'] ?? $params['total_amount'] ?? NULL;
-    if ($amount === NULL || $amount === '') {
-      throw new \CRM_Core_Exception('Missing contribution amount.');
-    }
-
-    if ((float) $amount === 0.0) {
-      return $params;
-    }
-
-    $amountCents = (int) round(((float) $amount) * 100);
     $currency = $params['currency'] ?? $params['currencyID'] ?? 'USD';
+    $amountMinorUnits = CRM_Square_Currency::toMinorUnits($amount, $currency);
 
-    // 3. Idempotency key.
-    $idempotencyKey = $this->idempotencyKey('payment', (string) ($params['invoiceID'] ?? $params['invoice_id'] ?? $params['contributionID'] ?? $params['contribution_id'] ?? 'unknown'));
+    // 3. Idempotency key, derived from the checkout's own reference so that a
+    // retried request for the same checkout can never charge twice. Every
+    // CiviCRM checkout supplies one; without it a retry could not be told
+    // apart from a new payment, so refuse rather than risk a second charge.
+    $paymentReference = $params['invoiceID'] ?? $params['invoice_id'] ?? $params['contributionID'] ?? $params['contribution_id'] ?? NULL;
+    if ($paymentReference === NULL || $paymentReference === '') {
+      throw new \CRM_Core_Exception('Cannot take a Square payment without a CiviCRM invoice or contribution reference.');
+    }
+    $idempotencyKey = $this->idempotencyKey('payment', (string) $paymentReference);
 
     // 4. Build payload for CreatePayment.
     $requestValues = [
       'idempotencyKey' => $idempotencyKey,
       'sourceId' => $token,
-      'amountMoney' => new Money(['amount' => $amountCents, 'currency' => $currency]),
+      'amountMoney' => new Money(['amount' => $amountMinorUnits, 'currency' => $currency]),
       'locationId' => $this->getLocationId(),
     ];
 
     // Add customer ID if available (optional for one-off payments)
     $contactId = $params['contactID'] ?? $params['contact_id'] ?? NULL;
     if ($contactId) {
-      $customerId = $this->getSquareCustomerId($contactId);
+      $customerId = $this->customers()->getSquareCustomerId($contactId);
       if ($customerId) {
         $requestValues['customerId'] = $customerId;
       }
@@ -1044,32 +542,51 @@ class CRM_Core_Payment_Square extends CRM_Core_Payment {
       $requestValues['referenceId'] = (string) $params['invoiceID'];
     }
 
-    // 5. Send request.
-    $response = $this->callSquare(fn (SquareClient $client) => $client->payments->create(new CreatePaymentRequest($requestValues)));
-    $payment = $response->getPayment();
-    if (empty($payment) || empty($payment->getId())) {
-      throw new \CRM_Core_Exception('Square payment failed: Missing payment ID.');
+    // 5. Send request. A decline or rejected request means nothing was
+    // charged; a server error, timeout or unreadable response does not.
+    try {
+      $response = $this->callSquare(fn (SquareClient $client) => $client->payments->create(new CreatePaymentRequest($requestValues)));
+    }
+    catch (CRM_Core_Payment_SquareRetryableException $e) {
+      throw $this->paymentOutcomeUnknown($e, "payment {$paymentReference}");
     }
 
-    $trxnId = $payment->getId();
-
-    // 6. Set required CiviCRM transaction fields.
-    $params['trxn_id'] = $trxnId;
-    $params['payment_status_id'] = $this->contributionStatusId('Completed');
-    $params['contribution_status_id'] = $this->contributionStatusId('Completed');
+    // 6. Report the outcome; CiviCRM's checkout records the payment against
+    // the returned trxn_id. A payment Square has authorized but not yet
+    // settled is reported Pending — payment.updated completes it later.
+    // Square has accepted the charge by now, so no failure from here on
+    // may be reported as a failed payment.
+    try {
+      $payment = $response->getPayment();
+      if (empty($payment) || empty($payment->getId())) {
+        throw new \CRM_Core_Exception('Square payment response has no payment ID.');
+      }
+      $isCompleted = CRM_Square_Status::mapPaymentStatus($payment->getStatus() ?? 'UNKNOWN') === CRM_Square_Status::contributionStatusId('Completed');
+      $statusName = $isCompleted ? 'Completed' : 'Pending';
+      $params['trxn_id'] = $payment->getId();
+      $params['payment_status_id'] = CRM_Square_Status::contributionStatusId($statusName);
+      $params['payment_status'] = $statusName;
+      $params['contribution_status_id'] = $params['payment_status_id'];
+    }
+    catch (\Throwable $e) {
+      throw $this->paymentOutcomeUnknown($e, "payment {$paymentReference}");
+    }
 
     return $params;
   }
 
   /**
-   * Process a recurring payment.
+   * Set up a recurring payment as a Square subscription.
    *
    * - Expects a Web Payments SDK token in:
    *     - $params['square_payment_token'] or
    *     - $params['payment_token'] or
    *     - $params['token']
-   * - Creates a Square Payment via /v2/payments.
-   * - On success, sets trxn_id and returns $params.
+   * - Saves the card on file and creates a Square Subscription that starts
+   *   immediately. Square itself charges the first installment, so no
+   *   separate payment is made here, and the checkout's contribution is
+   *   reported Pending: it is completed when Square confirms that charge
+   *   (see recordSubscriptionInstallment()).
    *
    * @param array $params
    *   Contribution / participant params.
@@ -1081,15 +598,7 @@ class CRM_Core_Payment_Square extends CRM_Core_Payment {
    */
   public function doRecurPayment(&$params) {
     // 1. Extract token from Web Payments SDK.
-    //    Webform CiviCRM's confirm-form path does not always merge $_POST
-    //    values into payment params, so we fall back to the request globals.
-    $token = $params['square_payment_token']
-      ?? $params['payment_token']
-      ?? $params['token']
-      ?? $_POST['square_payment_token']
-      ?? $_REQUEST['square_payment_token']
-      ?? NULL;
-
+    $token = $this->getPaymentToken($params);
     if (!$token) {
       throw new CRM_Core_Exception('Missing Square card token for recurring payments.');
     }
@@ -1106,22 +615,105 @@ class CRM_Core_Payment_Square extends CRM_Core_Payment {
       throw new CRM_Core_Exception('Missing contributionRecurID for Square recurring payments.');
     }
 
-    // 3. Ensure customer exists / or create one
-    $customerId = $this->ensureSquareCustomer($params);
-    if ($this->findSquareCustomerById($customerId)) {
-      CRM_Core_Payment_SquareDebugLogger::log("Square doRecurPayment: Found existing Square customer ID {$customerId} for CiviCRM recur ID {$recurId}");
-      $this->updateSquareCustomerDetails($customerId, $params);
-    }
-    else {
-      throw new CRM_Core_Exception("Failed to find or create Square customer for CiviCRM recur ID {$recurId}");
-    }
+    // 3. Determine the plan variation first: an amount or cadence Square
+    // cannot bill is refused before any customer or card is saved.
+    $planVariationId = $this->subscriptions()->getPlanVariationIdForParams($params);
+    CRM_Core_Payment_SquareDebugLogger::log("Square doRecurPayment: Using plan variation ID {$planVariationId} for CiviCRM recur ID {$recurId}");
 
-    // 4. Fetch the Square card ID via the PaymentToken that
+    // 4. Ensure the customer exists (saving the card), with current details.
+    $customers = $this->customers();
+    $customerId = $customers->ensureSquareCustomer($params);
+    $customers->updateSquareCustomerDetails($customerId, $params);
+
+    // 5. Fetch the Square card ID via the PaymentToken that
     // ensureSquareCustomer() -> createCardOnFile() just attached to this
     // recurring contribution. Card nonces are single-use, so we must not
     // redeem $token a second time here — ensureSquareCustomer() already
     // did that, and always redeems a fresh nonce into a brand new token,
     // so this is always the right one for this specific recur ID.
+    $cardId = $this->getRecurCardId((int) $recurId);
+    if (empty($cardId)) {
+      throw new CRM_Core_Exception("Failed to attach a Square card on file for CiviCRM recur ID {$recurId}.");
+    }
+    CRM_Core_Payment_SquareDebugLogger::log("Square doRecurPayment: Using card ID {$cardId} for customer ID {$customerId} and CiviCRM recur ID {$recurId}");
+
+    // 6. Generate idempotency key tied to the recurring record so re-posts don't duplicate.
+    $idempotencyKey = $this->idempotencyKey('subscription', (string) $recurId);
+    $source = [
+      'contact_id' => (string) ($params['contactID'] ?? $params['contact_id'] ?? ''),
+      'recur_id' => (string) $recurId,
+    ];
+    $note = json_encode($source, JSON_UNESCAPED_SLASHES);
+
+    // 7. Build subscription payload. startDate is deliberately omitted:
+    // Square then starts the subscription today (in the location's time
+    // zone) and immediately bills its first invoice to the card on file.
+    // That charge is the first installment. Previously this code set
+    // start_date to tomorrow AND made a separate immediate CreatePayment for
+    // today, which charged the donor twice once Square billed its own first
+    // invoice.
+    $createSubscriptionRequest = new CreateSubscriptionRequest([
+      'idempotencyKey' => $idempotencyKey,
+      'locationId' => $this->getLocationId(),
+      'planVariationId' => $planVariationId,
+      'customerId' => $customerId,
+      'cardId' => $cardId,
+      'source' => new SubscriptionSource(['name' => $note]),
+    ]);
+
+    // 8. Send subscription create request. Square bills the first
+    // installment as soon as the subscription exists, so once this may have
+    // succeeded, no failure may be reported as a failed payment.
+    try {
+      $response = $this->callSquare(fn (SquareClient $client) => $client->subscriptions->create($createSubscriptionRequest));
+    }
+    catch (CRM_Core_Payment_SquareRetryableException $e) {
+      throw $this->paymentOutcomeUnknown($e, "subscription for recurring contribution {$recurId}");
+    }
+    try {
+      $subscription = $response->getSubscription();
+      if (empty($subscription) || empty($subscription->getId())) {
+        throw new CRM_Core_Exception('Square subscription response has no subscription ID.');
+      }
+      $subscriptionId = $subscription->getId();
+      CRM_Core_Payment_SquareDebugLogger::log('Square subscription created: ' . json_encode([
+        'subscription_id' => $subscriptionId,
+        'recur_id' => $recurId,
+      ]));
+
+      // 9. Link the subscription to the recurring contribution, which stays
+      // Pending until its first payment is recorded.
+      $this->saveRecurSubscription((int) $recurId, $subscriptionId);
+    }
+    catch (\Throwable $e) {
+      $reference = "subscription " . ($subscriptionId ?? '(unknown ID)') . " for recurring contribution {$recurId}";
+      throw $this->paymentOutcomeUnknown($e, $reference);
+    }
+
+    // 10. The checkout's contribution stays Pending until Square confirms
+    // the first charge. No trxn_id is returned: the subscription ID
+    // identifies the recurring agreement (saved above as the recur's
+    // processor_id), not a payment, and webform_civicrm writes a returned
+    // trxn_id straight onto the Pending contribution. Its trxn_id becomes
+    // the Square payment ID when that payment is recorded.
+    $params['trxn_id'] = NULL;
+    $pendingStatusId = CRM_Square_Status::contributionStatusId('Pending');
+    $params['payment_status_id'] = $pendingStatusId;
+    $params['payment_status'] = 'Pending';
+    $params['contribution_status_id'] = $pendingStatusId;
+    $params['subscription_id'] = $subscriptionId;
+
+    return $params;
+  }
+
+  /**
+   * Square card ID saved as the recurring contribution's payment token.
+   *
+   * @param int $recurId
+   *
+   * @return string|null
+   */
+  protected function getRecurCardId(int $recurId): ?string {
     $recurForToken = ContributionRecur::get(FALSE)
       ->addWhere('id', '=', $recurId)
       ->addSelect('payment_token_id')
@@ -1132,123 +724,24 @@ class CRM_Core_Payment_Square extends CRM_Core_Payment {
       ->addSelect('token')
       ->execute()
       ->first();
-    $cardId = $paymentToken['token'] ?? NULL;
-    if (empty($cardId)) {
-      throw new CRM_Core_Exception("Failed to attach a Square card on file for CiviCRM recur ID {$recurId}.");
-    }
-    CRM_Core_Payment_SquareDebugLogger::log("Square doRecurPayment: Using card ID {$cardId} for customer ID {$customerId} and CiviCRM recur ID {$recurId}");
+    return $paymentToken['token'] ?? NULL;
+  }
 
-    // 5. Determine plan ID
-    $planVariationId = $this->getPlanVariationIdForParams($params);
-    CRM_Core_Payment_SquareDebugLogger::log("Square doRecurPayment: Using plan variation ID {$planVariationId} for CiviCRM recur ID {$recurId}");
-    // 6. Determine start date (Square-safe)
-    // Square rejects same-day start if UTC has rolled to next day.
-    // To avoid timezone hell: always start tomorrow.
-    $startDate = (new DateTime('tomorrow'))->format('Y-m-d');
-
-    // 7. Generate idempotency key tied to the recurring record so re-posts don't duplicate.
-    $idempotencyKey = $this->idempotencyKey('subscription', (string) $recurId);
-    $source = [
-      'contact_id' => (string) ($params['contactID'] ?? $params['contact_id'] ?? ''),
-      'recur_id' => (string) $recurId,
-    ];
-    // Implode key and value of source
-    // convert array to string with maintain key value.
-    $note = json_encode($source, JSON_UNESCAPED_SLASHES);
-
-    // 8. Build subscription payload
-    $createSubscriptionRequest = new CreateSubscriptionRequest([
-      'idempotencyKey' => $idempotencyKey,
-      'locationId' => $this->getLocationId(),
-      'planVariationId' => $planVariationId,
-      'customerId' => $customerId,
-      'cardId' => $cardId,
-      'startDate' => $startDate,
-      'source' => new SubscriptionSource(['name' => $note]),
-    ]);
-
-    // 9. Send subscription create request
-    $response = $this->callSquare(fn (SquareClient $client) => $client->subscriptions->create($createSubscriptionRequest));
-    $subscription = $response->getSubscription();
-
-    if (empty($subscription) || empty($subscription->getId())) {
-      throw new CRM_Core_Exception('Failed to create Square subscription.');
-    }
-    $subscriptionId = $subscription->getId();
-    CRM_Core_Payment_SquareDebugLogger::log('Square subscription created: ' . json_encode([
-      'subscription_id' => $subscriptionId,
-      'recur_id' => $recurId,
-    ]));
-
-    // 10. Handle initial payment (if needed)
-    // Square subscriptions don't charge on creation, they start on start_date.
-    // If the user wants to charge immediately, we need to make a one-time payment.
-    $initialPaymentNeeded = !empty($params['send_receipt']) || !empty($params['is_recur']);
-
-    if ($initialPaymentNeeded) {
-      $amountCents = (int) round(((float) $amount) * 100);
-      $currency = $params['currency'] ?? $params['currencyID'] ?? 'USD';
-      try {
-        // Make an initial one-time payment for the first billing cycle.
-        // Use a distinct operation name (rather than prefixing $idempotencyKey,
-        // which is already truncated to Square's 45-char max) so this stays <= 45 chars.
-        $initialPaymentIdempotencyKey = $this->idempotencyKey('subscription-init', (string) $recurId);
-        $initialPaymentRequest = new CreatePaymentRequest([
-          'idempotencyKey' => $initialPaymentIdempotencyKey,
-          'sourceId' => $cardId,
-          'amountMoney' => new Money(['amount' => $amountCents, 'currency' => $currency]),
-          'locationId' => $this->getLocationId(),
-          'customerId' => $customerId,
-          'referenceId' => (string) $recurId,
-        ]);
-
-        $paymentResponse = $this->callSquare(fn (SquareClient $client) => $client->payments->create($initialPaymentRequest));
-        $initialPayment = $paymentResponse->getPayment();
-        if (!empty($initialPayment) && !empty($initialPayment->getId())) {
-          $transactionId = $initialPayment->getId();
-          $status = $initialPayment->getStatus() ?? 'UNKNOWN';
-          ContributionRecur::update(FALSE)
-            ->addWhere('id', '=', $recurId)
-            ->addValue('processor_id', $subscriptionId)
-            ->addValue('trxn_id', $subscriptionId)
-          // In Progress.
-            ->addValue('contribution_status_id', 5)
-            ->execute();
-          CRM_Core_Payment_SquareDebugLogger::log("Square initial payment for subscription {$subscriptionId} created with transaction ID {$transactionId} and status {$status}");
-          return [
-          // Completed.
-            'payment_status_id' => 1,
-          // Completed.
-            'contribution_status_id' => 1,
-            'trxn_id' => $transactionId,
-            'subscription_id' => $subscriptionId,
-          ];
-        }
-      }
-      catch (Exception $e) {
-        // Log but don't fail - subscription is already created.
-        CRM_Core_Payment_SquareDebugLogger::log('Square initial payment failed (non-fatal): ' . $e->getMessage());
-      }
-    }
-
-    // 11. Update the recurring contribution record
+  /**
+   * Link a Square subscription to its recurring contribution.
+   *
+   * @param int $recurId
+   * @param string $subscriptionId
+   *
+   * @throws \CRM_Core_Exception
+   */
+  protected function saveRecurSubscription(int $recurId, string $subscriptionId): void {
     ContributionRecur::update(FALSE)
       ->addWhere('id', '=', $recurId)
       ->addValue('processor_id', $subscriptionId)
       ->addValue('trxn_id', $subscriptionId)
-    // Pending.
-      ->addValue('contribution_status_id', 2)
+      ->addValue('contribution_status_id', CRM_Square_Status::recurStatusId('Pending'))
       ->execute();
-
-    // 12. Return CiviCRM-standard response
-    return [
-    // Pending.
-      'payment_status_id' => 2,
-    // Pending.
-      'contribution_status_id' => 2,
-      'trxn_id' => $subscriptionId,
-      'subscription_id' => $subscriptionId,
-    ];
   }
 
   /**
@@ -1272,55 +765,168 @@ class CRM_Core_Payment_Square extends CRM_Core_Payment {
   /**
    * Perform a refund via Square Refunds API.
    *
+   * Only a refund Square has completed is reported: refund_status
+   * 'Completed' is what CiviCRM and mjwshared's refund form record, and the
+   * only status that form accepts. Square accepts a card refund as PENDING
+   * until it has the funds, which can take far longer than this request and
+   * can end in FAILED, so a refund still PENDING after a short wait is
+   * reported as an error and left for the refund.updated webhook to record
+   * once Square completes it (see CRM_Square_Reconciler::syncRefundFromSquare()).
+   *
    * @param array $params
+   *   trxn_id (the Square payment ID) and amount; currency is optional, and
+   *   ignored in favour of the payment's own.
    *
    * @return array
+   *   refund_trxn_id (the Square refund ID), refund_status ('Completed'),
+   *   trxn_date and fee_amount.
    *
-   * @throws \CRM_Core_Exception
+   * @throws \Civi\Payment\Exception\PaymentProcessorException
    */
   public function doRefund(&$params) {
     $trxnId = $params['trxn_id'] ?? $params['transaction_id'] ?? NULL;
     if (empty($trxnId)) {
-      throw new CRM_Core_Exception('Missing transaction ID for refund.');
+      throw new PaymentProcessorException('Missing transaction ID for refund.');
     }
 
     if (empty($params['amount'])) {
-      throw new CRM_Core_Exception('Missing refund amount.');
+      throw new PaymentProcessorException('Missing refund amount.');
     }
 
     $rawAmount = (float) $params['amount'];
-    $amountInCents = (int) round($rawAmount * 100);
-    if ($amountInCents <= 0) {
-      throw new CRM_Core_Exception('Refund amount must be greater than zero.');
+    if ($rawAmount <= 0) {
+      throw new PaymentProcessorException('Refund amount must be greater than zero.');
     }
 
-    $currency = $params['currencyID'] ?? $params['currency'] ?? 'USD';
+    try {
+      // The refund must be in the payment's currency, which mjwshared's
+      // refund form does not always pass on.
+      [$paymentCurrency, $refundCount] = $this->getRefundContext((string) $trxnId);
+      $currency = $paymentCurrency ?? $params['currencyID'] ?? $params['currency'] ?? 'USD';
+      $amountMinorUnits = CRM_Square_Currency::toMinorUnits($rawAmount, $currency);
+      if ($amountMinorUnits <= 0) {
+        throw new PaymentProcessorException('Refund amount must be greater than zero.');
+      }
 
-    $refundRequest = new RefundPaymentRequest([
-      'idempotencyKey' => $this->idempotencyKey('refund', (string) $trxnId . ':' . $amountInCents),
-      'paymentId' => $trxnId,
-      'amountMoney' => new Money(['amount' => $amountInCents, 'currency' => $currency]),
-    ]);
+      // The key changes once CiviCRM has recorded a refund, so a further
+      // refund of the same amount is a new refund — not mistaken by Square
+      // for a retry of the first, which would return the first again. Until
+      // then it does not change, so a retry of a refund whose outcome was
+      // lost gets Square's original refund back instead of a second one.
+      $refundRequest = new RefundPaymentRequest([
+        'idempotencyKey' => $this->idempotencyKey('refund', "{$trxnId}:{$amountMinorUnits}:{$refundCount}"),
+        'paymentId' => $trxnId,
+        'amountMoney' => new Money(['amount' => $amountMinorUnits, 'currency' => $currency]),
+      ]);
 
-    $response = $this->createRefund($refundRequest);
-    $refund = $response->getRefund();
+      $refund = $this->createRefund($refundRequest)->getRefund();
+      if (!empty($refund) && !empty($refund->getId())) {
+        $refund = $this->awaitRefundOutcome($refund);
+      }
+    }
+    catch (PaymentProcessorException $e) {
+      throw $e;
+    }
+    catch (\Throwable $e) {
+      throw new PaymentProcessorException(E::ts('Square refund failed: %1', [1 => $e->getMessage()]), 0, [], $e);
+    }
 
     if (empty($refund) || empty($refund->getId())) {
-      $msg = 'Square refund failed: unexpected response.';
-      throw new CRM_Core_Exception($msg);
+      throw new PaymentProcessorException('Square refund failed: unexpected response.');
     }
 
-    $status = $refund->getStatus() ?? 'UNKNOWN';
-
-    if (!in_array($status, ['PENDING', 'COMPLETED', 'APPROVED'], TRUE)) {
-      $msg = "Square refund not completed. Status: {$status}";
-      throw new CRM_Core_Exception($msg);
+    $status = strtoupper($refund->getStatus() ?? 'UNKNOWN');
+    if ($status === 'PENDING') {
+      throw new PaymentProcessorException(E::ts('Square accepted refund %1 but has not completed it yet, so it is not recorded in CiviCRM now. It will be recorded automatically once Square completes it. Do not refund this payment again.', [1 => $refund->getId()]));
+    }
+    if (!in_array($status, ['COMPLETED', 'APPROVED'], TRUE)) {
+      throw new PaymentProcessorException("Square refund not completed. Status: {$status}");
     }
 
+    $createdAt = $refund->getCreatedAt();
     return [
-      'refund_status' => $status,
       'refund_trxn_id' => $refund->getId(),
+      'refund_status' => 'Completed',
+      'trxn_date' => date('Y-m-d H:i:s', $createdAt && strtotime($createdAt) ? strtotime($createdAt) : time()),
+      // Square reports the refunded processing fee later, if at all.
+      'fee_amount' => 0,
     ];
+  }
+
+  /**
+   * The currency of a payment recorded in CiviCRM, and how many refunds its contribution has.
+   *
+   * @param string $paymentTrxnId
+   *   The Square payment ID.
+   *
+   * @return array
+   *   [currency or NULL if the payment is not recorded, number of refunds].
+   */
+  protected function getRefundContext(string $paymentTrxnId): array {
+    $payment = Payment::get(FALSE)
+      ->addSelect('contribution_id', 'currency')
+      ->addWhere('trxn_id', '=', $paymentTrxnId)
+      ->addWhere('total_amount', '>', 0)
+      ->execute()
+      ->first();
+    if (empty($payment['contribution_id'])) {
+      return [NULL, 0];
+    }
+    $refundCount = Payment::get(FALSE)
+      ->addSelect('id')
+      ->addWhere('contribution_id', '=', $payment['contribution_id'])
+      ->addWhere('total_amount', '<', 0)
+      ->execute()
+      ->count();
+    return [$payment['currency'] ?? NULL, $refundCount];
+  }
+
+  /**
+   * Wait briefly for Square to complete a refund it accepted as PENDING.
+   *
+   * Most card refunds complete within seconds. One Square has to fund from
+   * the seller's bank account can stay PENDING much longer, and may fail.
+   *
+   * @param \Square\Types\PaymentRefund $refund
+   *
+   * @return \Square\Types\PaymentRefund
+   *   The refund as Square last reported it.
+   */
+  protected function awaitRefundOutcome(PaymentRefund $refund): PaymentRefund {
+    for ($check = 0; $check < self::REFUND_STATUS_CHECKS && strtoupper((string) $refund->getStatus()) === 'PENDING'; $check++) {
+      $this->pause(self::REFUND_STATUS_CHECK_INTERVAL);
+      try {
+        $refund = $this->getRefund((string) $refund->getId()) ?? $refund;
+      }
+      catch (\Throwable $e) {
+        // The refund exists at Square either way; report what is known.
+        \Civi::log('square')->warning("Square: could not check on refund {$refund->getId()}: " . $e->getMessage());
+        break;
+      }
+    }
+    return $refund;
+  }
+
+  /**
+   * A refund as Square currently reports it.
+   *
+   * @param string $refundId
+   *
+   * @return \Square\Types\PaymentRefund|null
+   *
+   * @throws \CRM_Core_Exception
+   */
+  protected function getRefund(string $refundId): ?PaymentRefund {
+    return $this->callSquare(fn (SquareClient $client) => $client->refunds->get(new GetRefundsRequest(['refundId' => $refundId])))->getRefund();
+  }
+
+  /**
+   * Wait, between checks on a refund.
+   *
+   * @param int $microseconds
+   */
+  protected function pause(int $microseconds): void {
+    usleep($microseconds);
   }
 
   /**
@@ -1334,550 +940,6 @@ class CRM_Core_Payment_Square extends CRM_Core_Payment {
    */
   protected function createRefund(RefundPaymentRequest $request) {
     return $this->callSquare(fn (SquareClient $client) => $client->refunds->refundPayment($request));
-  }
-
-  /**
-   * Invoke the Square SDK client and translate its exceptions to CRM_Core_Exception.
-   *
-   * @param callable(\Square\SquareClient): mixed $call
-   *
-   * @return mixed
-   *   Whatever $call returns (typically a Square SDK response object).
-   *
-   * @throws \CRM_Core_Exception
-   */
-  protected function callSquare(callable $call) {
-    try {
-      return $call($this->buildSquareClient());
-    }
-    catch (SquareApiException $e) {
-      throw $this->squareApiError($e);
-    }
-    catch (SquareException $e) {
-      throw new CRM_Core_Exception('Square API request failed: ' . $e->getMessage());
-    }
-  }
-
-  /**
-   * Convert a Square SDK API exception to the message shape callers expect.
-   *
-   * @param \Square\Exceptions\SquareApiException $e
-   *
-   * @return \CRM_Core_Exception
-   */
-  protected function squareApiError(SquareApiException $e): CRM_Core_Exception {
-    $errorDetails = [];
-    foreach ($e->getErrors() as $err) {
-      $code = $err->getCode() ?: 'UNKNOWN';
-      $detail = $err->getDetail() ?? '';
-      $errorDetails[] = "{$code}: {$detail}";
-    }
-    $msg = "Square API returned HTTP {$e->getStatusCode()}.";
-    if ($errorDetails) {
-      $msg .= ' ' . implode(' | ', $errorDetails);
-    }
-    return new CRM_Core_Exception($msg);
-  }
-
-  /**
-   * Look up an existing Square customer by email.
-   *
-   * @param string $email
-   *   Customer email address.
-   *
-   * @return string|null
-   */
-  protected function findSquareCustomerByEmail($email) {
-    if (empty($email)) {
-      return NULL;
-    }
-
-    $response = $this->callSquare(fn (SquareClient $client) => $client->customers->search(new SearchCustomersRequest([
-      'query' => new CustomerQuery([
-        'filter' => new CustomerFilter([
-          'emailAddress' => new CustomerTextFilter(['exact' => $email]),
-        ]),
-      ]),
-    ])));
-
-    $customers = $response->getCustomers();
-    if (!empty($customers[0])) {
-      return $customers[0]->getId();
-    }
-
-    return NULL;
-  }
-
-  /**
-   * Look up an existing Square customer by ID.
-   *
-   * @param string $customerID
-   *   Square customer ID.
-   *
-   * @return string|null
-   */
-  protected function findSquareCustomerById($customerID) {
-    if (empty($customerID)) {
-      return NULL;
-    }
-
-    $response = $this->callSquare(fn (SquareClient $client) => $client->customers->get(
-      new GetCustomersRequest(['customerId' => $customerID])
-    ));
-    $customer = $response->getCustomer();
-    if (!empty($customer) && !empty($customer->getId())) {
-      return $customer->getId();
-    }
-
-    return NULL;
-  }
-
-  /**
-   * Update a Square customer's details from CiviCRM payment parameters.
-   *
-   * @param string $customerID
-   *   Square customer ID.
-   * @param array $params
-   *   CiviCRM payment parameters.
-   *
-   * @return void
-   *
-   * @throws CRM_Core_Exception
-   */
-  protected function updateSquareCustomerDetails($customerID, $params) {
-    $firstName = $params['first_name'] ?? NULL;
-    $lastName = $params['last_name'] ?? NULL;
-    $email = $params['email'] ?? $params['email-5'] ?? NULL;
-    $contactID = $params['contactID'] ?? $params['contact_id'] ?? NULL;
-
-    $requestValues = ['customerId' => $customerID];
-    if (!empty($firstName)) {
-      $requestValues['givenName'] = $firstName;
-    }
-    if (!empty($lastName)) {
-      $requestValues['familyName'] = $lastName;
-    }
-    if (!empty($email)) {
-      $requestValues['emailAddress'] = $email;
-    }
-    if (!empty($contactID)) {
-      $requestValues['referenceId'] = (string) $contactID;
-    }
-
-    $this->callSquare(fn (SquareClient $client) => $client->customers->update(new UpdateCustomerRequest($requestValues)));
-  }
-
-  /**
-   * Ensure a Square customer exists for this contact. Also handles storing card_id if available.
-   *
-   * 1. Check for a stored Square Customer ID in a custom field.
-   * 2. If none exists, check for existing Square customer by email.
-   * 3. If still none, create a new customer in Square.
-   * 4. Persist the new customer ID back to the contact.
-   * 5. If card token/nonce is present in $params, create and store the card_id as well.
-   *
-   * @param array $params
-   *   Contribution params (includes contactID/contact_id).
-   *
-   * @return string
-   *   Square customer ID.
-   *
-   * @throws CRM_Core_Exception
-   */
-  public function ensureSquareCustomer(array $params) {
-    $contactID = $params['contactID'] ?? $params['contact_id'] ?? NULL;
-    if (!$contactID) {
-      throw new CRM_Core_Exception('Missing contactID in params for Square recurring payment.');
-    }
-
-    $contactID = (int) $contactID;
-
-    // 1. Check if we already have a stored Square Customer ID.
-    if ($customerId = $this->getSquareCustomerId($contactID)) {
-      CRM_Core_Payment_SquareDebugLogger::log('Square customer already exists for contact ' . $contactID . ': ' . $customerId);
-      // If a fresh card token/nonce was submitted (e.g. a returning donor
-      // entering a new card), attach and store it. Card nonces are
-      // single-use, so this must be the only place that redeems it.
-      $cardNonce = $params['square_payment_token']
-        ?? $params['payment_token']
-        ?? $params['token']
-        ?? NULL;
-      if (!empty($cardNonce)) {
-        $this->createCardOnFile($customerId, $cardNonce, $params, $contactID);
-      }
-      return $customerId;
-    }
-    // Migration logic: check whether this contact already exists in Square based on reference_id.
-    // If Square already has a customer with reference_id == Civi contact ID, we adopt that one.
-    try {
-      $lookupResponse = $this->callSquare(fn (SquareClient $client) => $client->customers->search(new SearchCustomersRequest([
-        'query' => new CustomerQuery([
-          'filter' => new CustomerFilter([
-            'referenceId' => new CustomerTextFilter(['exact' => (string) $contactID]),
-          ]),
-        ]),
-      ])));
-      $migratedCustomers = $lookupResponse->getCustomers();
-      if (!empty($migratedCustomers[0])) {
-        $migratedCustomerId = $migratedCustomers[0]->getId();
-        // Check if another Civi contact already mapped to this customerId
-        // (for this payment processor).
-        $existingContactId = CRM_Core_DAO::singleValueQuery(
-          'SELECT contact_id FROM square_customer_map WHERE square_customer_id = %1 AND payment_processor_id = %2',
-          [1 => [$migratedCustomerId, 'String'], 2 => [(int) ($this->_paymentProcessor['id'] ?? 0), 'Integer']]
-        );
-
-        if (!empty($existingContactId) && (int) $existingContactId !== $contactID) {
-          throw new CRM_Core_Exception(
-            "Square customer {$migratedCustomerId} already mapped to a different CiviCRM contact ({$existingContactId})."
-          );
-        }
-
-        // Store mapping if safe.
-        $this->saveSquareCustomerId($contactID, $migratedCustomerId);
-
-        // If a card token is present, attach card to this existing Square customer.
-        $cardNonce = $params['square_payment_token']
-          ?? $params['payment_token']
-          ?? $params['token']
-          ?? NULL;
-
-        if (!empty($cardNonce)) {
-          $this->createCardOnFile($migratedCustomerId, $cardNonce, $params, $contactID);
-        }
-
-        return $migratedCustomerId;
-      }
-    }
-    catch (\Exception $e) {
-      CRM_Core_Payment_SquareDebugLogger::log('Square migration lookup error: ' . $e->getMessage());
-    }
-    $existingCustomerId = $this->getSquareCustomerId($contactID);
-    if (!empty($existingCustomerId)) {
-      // If card token/nonce is present, create and store card_id.
-      $cardNonce = $params['square_payment_token']
-        ?? $params['payment_token']
-        ?? $params['token']
-        ?? NULL;
-      if (!empty($cardNonce)) {
-        $this->createCardOnFile($existingCustomerId, $cardNonce, $params, $contactID);
-      }
-      return $existingCustomerId;
-    }
-
-    // Load contact email.
-    $contact = Contact::get(FALSE)
-      ->addWhere('id', '=', $contactID)
-      ->addSelect('email')
-      ->execute()
-      ->first();
-
-    $email = $contact['email'] ?? NULL;
-
-    // Check for existing Square customer by email.
-    $squareCustomerByEmail = $this->findSquareCustomerByEmail($email);
-
-    if (!empty($squareCustomerByEmail)) {
-      // Check if mapped to another contact (for this payment processor).
-      $existingContactId = CRM_Core_DAO::singleValueQuery(
-        'SELECT contact_id FROM square_customer_map WHERE square_customer_id = %1 AND payment_processor_id = %2',
-        [1 => [$squareCustomerByEmail, 'String'], 2 => [(int) ($this->_paymentProcessor['id'] ?? 0), 'Integer']]
-      );
-
-      if (!empty($existingContactId) && (int) $existingContactId !== $contactID) {
-        throw new CRM_Core_Exception('This email address is already associated with a different Square customer in our system.');
-      }
-
-      // Save mapping if none existed previously.
-      $this->saveSquareCustomerId($contactID, $squareCustomerByEmail);
-      // If card token/nonce is present, create and store card_id.
-      $cardNonce = $params['square_payment_token']
-        ?? $params['payment_token']
-        ?? $params['token']
-        ?? NULL;
-      if (!empty($cardNonce)) {
-        $this->createCardOnFile($squareCustomerByEmail, $cardNonce, $params, $contactID);
-      }
-      return $squareCustomerByEmail;
-    }
-
-    // 2. Load contact info from CiviCRM using API4 for customer creation.
-    $contactInfo = Contact::get(FALSE)
-      ->addWhere('id', '=', $contactID)
-      ->addSelect('first_name', 'last_name', 'email')
-      ->execute()
-      ->first();
-
-    if (empty($contactInfo)) {
-      throw new CRM_Core_Exception("Unable to load contact {$contactID} for Square customer creation.");
-    }
-
-    $firstName = $contactInfo['first_name'] ?? NULL;
-    $lastName = $contactInfo['last_name'] ?? NULL;
-    $email = $contactInfo['email'] ?? NULL;
-
-    $createResponse = $this->callSquare(fn (SquareClient $client) => $client->customers->create(new CreateCustomerRequest([
-      'givenName' => $firstName,
-      'familyName' => $lastName,
-      'emailAddress' => $email,
-      'referenceId' => (string) $contactID,
-    ])));
-
-    $newCustomer = $createResponse->getCustomer();
-    if (empty($newCustomer) || empty($newCustomer->getId())) {
-      throw new CRM_Core_Exception('Failed to create Square customer.');
-    }
-
-    $customerId = $newCustomer->getId();
-
-    // 3. Persist the customer ID mapping for this contact + processor.
-    $this->saveSquareCustomerId($contactID, $customerId);
-
-    // If card token/nonce is present, create and store card_id.
-    $cardNonce = $params['square_payment_token']
-      ?? $params['payment_token']
-      ?? $params['token']
-      ?? NULL;
-    if (!empty($cardNonce)) {
-      $this->createCardOnFile($customerId, $cardNonce, $params, $contactID);
-    }
-
-    return $customerId;
-  }
-
-  /**
-   * Attach a card to the Square customer using the tokenized card nonce.
-   *
-   * @param string $customerId
-   *   Square customer ID.
-   * @param string $cardNonce
-   *   Token from Web Payments SDK.
-   * @param array $params
-   *   Additional parameters, possibly including verification_token.
-   * @param int|null $contactId
-   *   CiviCRM contact ID (optional, but required to record a PaymentToken).
-   *
-   * @return string
-   *   Square card ID.
-   *
-   * @throws \CRM_Core_Exception
-   */
-  public function createCardOnFile($customerId, $cardNonce, array $params = [], $contactId = NULL) {
-    if (empty($cardNonce)) {
-      throw new CRM_Core_Exception('Missing Square card token for recurring payment.');
-    }
-
-    $cardValues = ['customerId' => $customerId];
-
-    // Add billing address if available.
-    if (!empty($params['billing_address'])) {
-      $cardValues['billingAddress'] = new Address([
-        'addressLine1' => $params['billing_address']['street_address'] ?? NULL,
-        'addressLine2' => $params['billing_address']['street_address_2'] ?? NULL,
-        'locality' => $params['billing_address']['city'] ?? NULL,
-        'administrativeDistrictLevel1' => $params['billing_address']['state'] ?? NULL,
-        'postalCode' => $params['billing_address']['postal_code'] ?? NULL,
-        'country' => $this->mapCountryCode($params['billing_address']['country'] ?? 'US'),
-      ]);
-    }
-
-    $requestValues = [
-      'idempotencyKey' => uniqid('square_card_', TRUE),
-      'sourceId' => $cardNonce,
-      'card' => new Card($cardValues),
-    ];
-    // Square requires verification_token for AVS/SCA under certain conditions.
-    if (!empty($params['verification_token'])) {
-      $requestValues['verificationToken'] = $params['verification_token'];
-    }
-
-    try {
-      $response = $this->buildSquareClient()->cards->create(new CreateCardRequest($requestValues));
-    }
-    catch (SquareApiException $e) {
-      // Translate structured Square card errors into a human-friendly message.
-      throw new CRM_Core_Exception($this->translateSquareCardError($e->getErrors()));
-    }
-    catch (SquareException $e) {
-      throw new CRM_Core_Exception('Square API request failed: ' . $e->getMessage());
-    }
-
-    $card = $response->getCard();
-    if (empty($card) || empty($card->getId())) {
-      throw new CRM_Core_Exception('Failed to create card on file with Square.');
-    }
-
-    $cardId = $card->getId();
-
-    // Record this card as a CiviCRM PaymentToken (instead of a custom
-    // field) so multiple cards per contact are properly distinguished, and
-    // link it to the recurring contribution it was created for, if any.
-    if (!empty($contactId)) {
-      $expiryDate = NULL;
-      if ($card->getExpYear() && $card->getExpMonth()) {
-        $expiryDate = date('Y-m-t', mktime(0, 0, 0, (int) $card->getExpMonth(), 1, (int) $card->getExpYear()));
-      }
-
-      $tokenCreate = PaymentToken::create(FALSE)
-        ->addValue('contact_id', (int) $contactId)
-        ->addValue('payment_processor_id', (int) ($this->_paymentProcessor['id'] ?? 0))
-        ->addValue('token', $cardId)
-        ->addValue('masked_account_number', $card->getLast4());
-      if ($expiryDate) {
-        $tokenCreate->addValue('expiry_date', $expiryDate);
-      }
-      if (!empty($params['first_name'])) {
-        $tokenCreate->addValue('billing_first_name', $params['first_name']);
-      }
-      if (!empty($params['last_name'])) {
-        $tokenCreate->addValue('billing_last_name', $params['last_name']);
-      }
-      $email = $params['email'] ?? $params['email-5'] ?? NULL;
-      if (!empty($email)) {
-        $tokenCreate->addValue('email', $email);
-      }
-      $paymentToken = $tokenCreate->execute()->first();
-
-      if (!empty($paymentToken['id']) && !empty($params['contributionRecurID'])) {
-        ContributionRecur::update(FALSE)
-          ->addWhere('id', '=', (int) $params['contributionRecurID'])
-          ->addValue('payment_token_id', $paymentToken['id'])
-          ->execute();
-      }
-    }
-
-    return $cardId;
-  }
-
-  /**
-   * Map country to standardized 2-letter country code.
-   */
-  protected function mapCountryCode($country) {
-    // Standardize country codes/names.
-    $countryMap = [
-      'US' => 'US',
-      'USA' => 'US',
-      'UNITED STATES' => 'US',
-      'UNITED STATES OF AMERICA' => 'US',
-      'CA' => 'CA',
-      'CANADA' => 'CA',
-      'GB' => 'GB',
-      'UK' => 'GB',
-      'UNITED KINGDOM' => 'GB',
-    ];
-
-    // Normalize input.
-    $normalizedCountry = strtoupper(trim($country));
-
-    // Return mapped country or default to US.
-    return $countryMap[$normalizedCountry] ?? 'US';
-  }
-
-  /**
-   * Translate Square card errors to human-friendly messages.
-   *
-   * @param \Square\Types\Error[] $errors
-   *   Square card errors.
-   *
-   * @return string
-   */
-  protected function translateSquareCardError(array $errors) {
-    $messages = [];
-
-    foreach ($errors as $err) {
-      $code = $err->getCode() ?? '';
-      switch ($code) {
-        case 'CARD_DECLINED':
-          $messages[] = 'Your card was declined. Please use a different card.';
-          break;
-
-        case 'GENERIC_DECLINE':
-          $messages[] = 'The card was declined by the bank.';
-          break;
-
-        case 'INVALID_EXPIRATION':
-          $messages[] = 'The card expiration date is invalid.';
-          break;
-
-        case 'CVV_FAILURE':
-          $messages[] = 'The CVV security code is incorrect.';
-          break;
-
-        case 'ADDRESS_VERIFICATION_FAILURE':
-          $messages[] = 'The billing ZIP/postal code did not match the card.';
-          break;
-
-        case 'INSUFFICIENT_FUNDS':
-          $messages[] = 'The card has insufficient funds.';
-          break;
-
-        default:
-          if (!empty($err->getDetail())) {
-            $messages[] = $err->getDetail();
-          }
-          else {
-            $messages[] = 'The card could not be processed.';
-          }
-          break;
-      }
-    }
-
-    return implode(' ', $messages);
-  }
-
-  /**
-   * Get the plan variation ID for recurring-payment parameters.
-   */
-  protected function getPlanVariationIdForParams(array $params): string {
-    $entity = $params['component'] ?? 'contribute';
-    $amount = (float) ($params['amount'] ?? 0);
-    $currency = $params['currency'] ?? 'USD';
-    $intervalUnit = $params['frequency_unit'] ?? '';
-    $intervalStep = (int) ($params['frequency_interval'] ?? 1);
-    $installments = (int) ($params['installments'] ?? 0);
-    if (!$amount || !$intervalUnit) {
-      throw new CRM_Core_Exception('Amount and cadence are required for Square subscription.');
-    }
-
-    // A plan identifies a subscription purpose; a variation identifies its amount and cadence.
-    $planName = sprintf(
-      'CiviCRM %s',
-      ucfirst($entity)
-    );
-
-    $planId = $this->getOrCreateSubscriptionPlan($planName);
-    CRM_Core_Payment_SquareDebugLogger::log("Square plan ID for {$entity}: {$planId}");
-    return $this->getOrCreatePlanVariation(
-      $planId, $amount,
-      $currency, $intervalUnit,
-      $intervalStep, $installments
-    );
-  }
-
-  /**
-   * Determine the Square plan ID for this recurring payment.
-   *
-   * @param array $params
-   *
-   * @return string
-   *
-   * @throws \CRM_Core_Exception
-   */
-  protected function getPlanIdForParams(array $params) {
-    $membershipTypeId = $params['membership_type_id'] ?? NULL;
-
-    $planMap = Civi::settings()->get('org_uschess_square_plan_map') ?? [];
-    $planId = NULL;
-
-    if ($membershipTypeId && isset($planMap[$membershipTypeId])) {
-      $planId = $planMap[$membershipTypeId];
-    }
-
-    if (!$planId) {
-      throw new CRM_Core_Exception("No Square plan mapping found for membership type ID {$membershipTypeId}.");
-    }
-
-    return $planId;
   }
 
   /**
@@ -1914,20 +976,101 @@ class CRM_Core_Payment_Square extends CRM_Core_Payment {
     catch (PaymentProcessorException $e) {
       throw $e;
     }
-    catch (\Exception $e) {
+    catch (\Throwable $e) {
       $errorMessage = E::ts('Failed to cancel the Square subscription: ') . $e->getMessage();
       \Civi::log('square')->error($errorMessage);
-      throw new PaymentProcessorException($errorMessage, 0, $e);
+      // $previous is CRM_Core_Exception's 4th constructor argument
+      // ($message, $error_code, $errorData, $previous) — passing $e as the
+      // 3rd argument silently drops it into the $errorData slot instead.
+      throw new PaymentProcessorException($errorMessage, 0, [], $e);
     }
 
     return ['message' => E::ts('Successfully cancelled the Square subscription.')];
   }
 
   /**
+   * Change the amount of a Square subscription.
+   *
+   * CiviCRM's contract for "change the amount of a recurring contribution"
+   * (CRM_Contribute_Form_UpdateSubscription): its existence enables that
+   * form's amount field. After this returns, CiviCRM saves the submitted
+   * amount and installments on the recurring contribution.
+   *
+   * @param string $message
+   *   Activity details for the change; unchanged here.
+   * @param array $params
+   *   From the form: subscriptionId (the recur's processor_id),
+   *   contributionRecurID, amount and installments.
+   *
+   * @return bool
+   *
+   * @throws \Civi\Payment\Exception\PaymentProcessorException
+   */
+  public function changeSubscriptionAmount(&$message = '', $params = []) {
+    $subscriptionId = $params['subscriptionId'] ?? NULL;
+    $recurId = (int) ($params['contributionRecurID'] ?? $params['id'] ?? 0);
+    // The form passes the amount as submitted, e.g. "1,000.00".
+    $amount = isset($params['amount']) ? CRM_Utils_Rule::cleanMoney((string) $params['amount']) : NULL;
+    if (empty($subscriptionId) || !$recurId || !is_numeric($amount) || (float) $amount <= 0) {
+      throw new PaymentProcessorException(E::ts('A Square subscription and a positive amount are required to change the amount.'));
+    }
+
+    $recur = $this->getRecurForAmountChange($recurId);
+    if (!$recur || $recur['processor_id'] !== $subscriptionId) {
+      throw new PaymentProcessorException(E::ts('This recurring contribution is not linked to that Square subscription.'));
+    }
+    // CiviCRM also saves the form's installments; Square cannot change the
+    // number of billing periods of an existing subscription.
+    if (isset($params['installments']) && (int) $params['installments'] !== (int) ($recur['installments'] ?? 0)) {
+      throw new PaymentProcessorException(E::ts('Square cannot change the number of installments of an existing subscription. Cancel it and create a new recurring contribution instead.'));
+    }
+    // CiviCRM only moves a single-line-item template contribution to the
+    // new amount, so later installments of a multi-item series would keep
+    // the old one — and never match what Square charges.
+    if ($recur['line_item_count'] > 1) {
+      throw new PaymentProcessorException(E::ts('The amount of a recurring contribution with more than one line item cannot be changed.'));
+    }
+
+    try {
+      $this->subscriptions()->changeAmount($subscriptionId, (float) $amount, $recur['currency']);
+    }
+    catch (\Throwable $e) {
+      throw new PaymentProcessorException(E::ts('Failed to change the Square subscription amount: %1', [1 => $e->getMessage()]), 0, [], $e);
+    }
+    return TRUE;
+  }
+
+  /**
+   * The recurring contribution changeSubscriptionAmount() is changing.
+   *
+   * @param int $recurId
+   *
+   * @return array|null
+   *   processor_id, installments, currency, and line_item_count (of the
+   *   template contribution later installments are copied from). NULL if
+   *   the recurring contribution does not belong to this processor.
+   */
+  protected function getRecurForAmountChange(int $recurId): ?array {
+    $recur = ContributionRecur::get(FALSE)
+      ->addSelect('processor_id', 'installments', 'currency')
+      ->addWhere('id', '=', $recurId)
+      ->addWhere('payment_processor_id', '=', $this->processorId())
+      ->execute()
+      ->first();
+    if (!$recur) {
+      return NULL;
+    }
+    // Flattened: otherwise line_item is keyed by price set, one entry per set.
+    $template = CRM_Contribute_BAO_ContributionRecur::getTemplateContribution($recurId, [], TRUE);
+    $recur['line_item_count'] = count($template['line_item'] ?? []);
+    return $recur;
+  }
+
+  /**
    * Cancel a Square subscription by its processor ID.
    *
-   * Low-level helper used by doCancelRecurring() and by the civicrm_post hook.
-   * Makes the Square API call directly without PropertyBag logic.
+   * Low-level helper used by doCancelRecurring(). Makes the Square API call
+   * directly without PropertyBag logic.
    *
    * @param string $subscriptionId
    *   Square subscription ID (e.g. "SUB_xxx").
@@ -1939,113 +1082,7 @@ class CRM_Core_Payment_Square extends CRM_Core_Payment {
       throw new PaymentProcessorException(E::ts('Cannot cancel Square subscription: empty subscription ID.'));
     }
 
-    $this->callSquare(fn (SquareClient $client) => $client->subscriptions->cancel(
-      new CancelSubscriptionsRequest(['subscriptionId' => $subscriptionId])
-    ));
-  }
-
-  /**
-   * Update subscription amount at Square.
-   *
-   * @param string $subscriptionId
-   * @param float $newAmount
-   * @param string $currency
-   *
-   * @throws \CRM_Core_Exception
-   */
-  public function updateSubscriptionAmount($subscriptionId, $newAmount, $currency = 'USD') {
-    $amountCents = (int) round(((float) $newAmount) * 100);
-
-    $this->callSquare(fn (SquareClient $client) => $client->subscriptions->update(new UpdateSubscriptionRequest([
-      'subscriptionId' => $subscriptionId,
-      'subscription' => new Subscription([
-        'priceOverrideMoney' => new Money(['amount' => $amountCents, 'currency' => $currency]),
-      ]),
-    ])));
-  }
-
-  /**
-   * Update the billing day / next billing date for a Square subscription.
-   *
-   * @param string $subscriptionId
-   * @param string $nextBillingDate
-   *   Format: YYYY-MM-DD.
-   *
-   * @throws \CRM_Core_Exception
-   */
-  public function updateSubscriptionBillingDate($subscriptionId, $nextBillingDate) {
-    $this->callSquare(fn (SquareClient $client) => $client->subscriptions->update(new UpdateSubscriptionRequest([
-      'subscriptionId' => $subscriptionId,
-      'subscription' => new Subscription([
-        'startDate' => $nextBillingDate,
-      ]),
-    ])));
-  }
-
-  /**
-   * Update the cadence (frequency) of a subscription.
-   *
-   * @param string $subscriptionId
-   * @param string $newPlanId
-   *   Square plan *variation* ID — the SDK's Subscription resource only has
-   *   a planVariationId field (no legacy plan_id equivalent).
-   *
-   * @throws \CRM_Core_Exception
-   */
-  public function updateSubscriptionPlan($subscriptionId, $newPlanId) {
-    $this->callSquare(fn (SquareClient $client) => $client->subscriptions->update(new UpdateSubscriptionRequest([
-      'subscriptionId' => $subscriptionId,
-      'subscription' => new Subscription([
-        'planVariationId' => $newPlanId,
-      ]),
-    ])));
-  }
-
-  /**
-   * Get the Square customer ID stored for a contact and processor.
-   *
-   * Live and sandbox accounts use distinct customer records.
-   *
-   * @param int $contactId
-   *
-   * @return string|null
-   */
-  protected function getSquareCustomerId($contactId) {
-    $contactId = (int) $contactId;
-    $processorId = (int) ($this->_paymentProcessor['id'] ?? 0);
-    if ($contactId <= 0 || $processorId <= 0) {
-      return NULL;
-    }
-
-    $customerId = CRM_Core_DAO::singleValueQuery(
-      'SELECT square_customer_id FROM square_customer_map WHERE contact_id = %1 AND payment_processor_id = %2',
-      [1 => [$contactId, 'Integer'], 2 => [$processorId, 'Integer']]
-    );
-
-    return $customerId !== NULL ? (string) $customerId : NULL;
-  }
-
-  /**
-   * Save the Square customer ID for a contact and processor.
-   *
-   * See getSquareCustomerId().
-   *
-   * @param int $contactId
-   * @param string $customerId
-   */
-  protected function saveSquareCustomerId($contactId, $customerId) {
-    $contactId = (int) $contactId;
-    $processorId = (int) ($this->_paymentProcessor['id'] ?? 0);
-    if ($contactId <= 0 || $processorId <= 0 || empty($customerId)) {
-      return;
-    }
-
-    CRM_Core_DAO::executeQuery(
-      'INSERT INTO square_customer_map (contact_id, payment_processor_id, square_customer_id)
-       VALUES (%1, %2, %3)
-       ON DUPLICATE KEY UPDATE square_customer_id = VALUES(square_customer_id)',
-      [1 => [$contactId, 'Integer'], 2 => [$processorId, 'Integer'], 3 => [$customerId, 'String']]
-    );
+    $this->subscriptions()->cancel($subscriptionId);
   }
 
   /**
@@ -2086,385 +1123,6 @@ class CRM_Core_Payment_Square extends CRM_Core_Payment {
   }
 
   /**
-   * Advertise the configuration fields used by this processor.
-   */
-  public static function getPaymentProcessorSettings() {
-    return [
-      'user_name' => [
-        'label' => ts('Square Application ID'),
-        'description' => ts('Found under Developer Dashboard → Your Application → Credentials.'),
-        'type' => 'Text',
-        'size' => CRM_Utils_Type::HUGE,
-        'required' => TRUE,
-      ],
-      'password' => [
-        'label' => ts('Square Access Token'),
-        'description' => ts('The Square Access Token (sandbox or production).'),
-        'type' => 'Password',
-        'size' => CRM_Utils_Type::HUGE,
-        'required' => TRUE,
-      ],
-      'signature' => [
-        'label' => ts('Square Location ID'),
-        'description' => ts('Found under Locations in your Square Dashboard.'),
-        'type' => 'Text',
-        'size' => CRM_Utils_Type::HUGE,
-        'required' => TRUE,
-      ],
-      'test_user_name' => [
-        'label' => ts('Square Sandbox Application ID'),
-        'description' => ts('Found under Developer Dashboard → Your Application → Credentials.'),
-        'type' => 'Text',
-        'size' => CRM_Utils_Type::HUGE,
-        'required' => TRUE,
-      ],
-      'test_password' => [
-        'label' => ts('Square Sandbox Access Token'),
-        'description' => ts('The Square Access Token (sandbox or production).'),
-        'type' => 'Password',
-        'size' => CRM_Utils_Type::HUGE,
-        'required' => TRUE,
-      ],
-      'test_signature' => [
-        'label' => ts('Square Sandbox Location ID'),
-        'description' => ts('Found under Locations in your Square Dashboard.'),
-        'type' => 'Text',
-        'size' => CRM_Utils_Type::HUGE,
-        'required' => TRUE,
-      ],
-      'subject' => [
-        'label' => ts('Webhook Signature Key'),
-        'description' => ts('The Webhook Signature Key used to validate events from Square.'),
-        'type' => 'Text',
-        'size' => CRM_Utils_Type::HUGE,
-        'required' => TRUE,
-      ],
-      'test_subject' => [
-        'label' => ts('Square Sandbox Webhook Signature Key'),
-        'description' => ts('The Webhook Signature Key used to validate events from Square.'),
-        'type' => 'Text',
-        'size' => CRM_Utils_Type::HUGE,
-        'required' => TRUE,
-      ],
-      'is_test' => [
-        'label' => ts('Is Test Mode?'),
-        'description' => ts('When enabled, uses Square Sandbox environment instead of Live.'),
-        'type' => 'Checkbox',
-        'required' => FALSE,
-        'default' => 1,
-      ],
-    ];
-  }
-
-  /**
-   * Validate payment processor settings on save.
-   */
-  public function validateForm($values, &$errors) {
-    if (($values['payment_processor_type_id:name'] ?? '') !== 'Square') {
-      return;
-    }
-
-    if (empty($values['user_name'])) {
-      $errors['user_name'] = ts('Square Application ID is required.');
-    }
-    if (empty($values['password'])) {
-      $errors['password'] = ts('Square Access Token is required.');
-    }
-    if (empty($values['signature'])) {
-      $errors['signature'] = ts('Square Location ID is required.');
-    }
-    if (empty($values['subject'])) {
-      $errors['subject'] = ts('Webhook Signature Key is required.');
-    }
-  }
-
-  /**
-   * Get or create a subscription plan variation with cadence.
-   *
-   * @param string $planId
-   * @param float $amount
-   * @param string $currency
-   * @param string $intervalUnit
-   *   Day, week, month, or year.
-   * @param int $intervalStep
-   * @param int|null $installments
-   *
-   * @return string Plan variation ID
-   *
-   * @throws CRM_Core_Exception
-   */
-  protected function getOrCreatePlanVariation(
-    string $planId,
-    float $amount,
-    string $currency,
-    string $intervalUnit,
-    int $intervalStep = 1,
-    ?int $installments = NULL,
-  ): string {
-    CRM_Core_Payment_SquareDebugLogger::log("Looking up Square plan variation: {$planId}, {$amount} {$currency}, every {$intervalStep} {$intervalUnit}");
-    $cadence = $this->resolveCadence($intervalUnit, $intervalStep);
-    CRM_Core_Payment_SquareDebugLogger::log("Resolved Square cadence: {$cadence}");
-    $cacheKey = "{$planId}_{$cadence}_{$amount}";
-    $cache = Civi::settings()->get('org_square_plan_variation_cache') ?? [];
-
-    if (!empty($cache[$cacheKey])) {
-      return $cache[$cacheKey];
-    }
-
-    $label = sprintf(
-      '%s %0.2f %s',
-      $cadence,
-      $amount,
-      $currency
-    );
-    CRM_Core_Payment_SquareDebugLogger::log("Creating label Square plan variation: {$label}");
-    $amountCents = (int) round($amount * 100);
-
-    $phase = new SubscriptionPhase([
-      'ordinal' => 0,
-    // MONTHLY, ANNUAL.
-      'cadence' => strtoupper($cadence),
-      'periods' => $installments ?? 0,
-      'pricing' => new SubscriptionPricing([
-        'type' => 'STATIC',
-        'priceMoney' => new Money(['amount' => $amountCents, 'currency' => $currency]),
-      ]),
-    ]);
-
-    $catalogObject = CatalogObject::subscriptionPlanVariation(new CatalogObjectSubscriptionPlanVariation([
-      'id' => '#var_' . md5($cacheKey),
-      'subscriptionPlanVariationData' => new CatalogSubscriptionPlanVariation([
-        'name' => $label,
-        'subscriptionPlanId' => $planId,
-        'phases' => [$phase],
-      ]),
-    ]));
-
-    $response = $this->callSquare(fn (SquareClient $client) => $client->catalog->batchUpsert(new BatchUpsertCatalogObjectsRequest([
-      'idempotencyKey' => uniqid('plan_var_', TRUE),
-      'batches' => [new CatalogObjectBatch(['objects' => [$catalogObject]])],
-    ])));
-
-    $objects = $response->getObjects();
-    $variationId = !empty($objects[0]) ? $objects[0]->getValue()->getId() : NULL;
-    CRM_Core_Payment_SquareDebugLogger::log("Created Square plan variation ID: {$variationId}");
-    if (!$variationId) {
-      throw new CRM_Core_Exception('Failed to create Square plan variation.');
-    }
-
-    $cache[$cacheKey] = $variationId;
-    Civi::settings()->set('org_square_plan_variation_cache', $cache);
-
-    return $variationId;
-  }
-
-  /**
-   * Resolve Square cadence from interval unit + frequency.
-   *
-   * @param string $unit
-   *   Day, week, month, or year.
-   * @param int $step
-   *
-   * @return string
-   *
-   * @throws CRM_Core_Exception
-   */
-  protected function resolveCadence(string $unit, int $step): string {
-
-    foreach (self::SQUARE_CADENCES as $cadence => $def) {
-      if ($def['unit'] === $unit && $def['step'] === $step) {
-        return $cadence;
-      }
-    }
-
-    throw new CRM_Core_Exception(
-      "Unsupported Square cadence: every {$step} {$unit}(s)"
-    );
-  }
-
-  /**
-   * Get or create a Square Subscription Plan.
-   *
-   * @param string $name
-   *
-   * @return string Plan ID
-   *
-   * @throws CRM_Core_Exception
-   */
-  protected function getOrCreateSubscriptionPlan(string $name): string {
-    // CRM_Core_Payment_SquareDebugLogger::log("Looking up Square subscription plan: {$name}");
-    // Cache via Civi setting.
-    $cache = Civi::settings()->get('org_square_plan_cache') ?? [];
-
-    if (!empty($cache[$name])) {
-      return $cache[$name];
-    }
-
-    $catalogObject = CatalogObject::subscriptionPlan(new CatalogObjectSubscriptionPlan([
-      'id' => '#plan_' . md5($name),
-      'subscriptionPlanData' => new CatalogSubscriptionPlan([
-        'name' => $name,
-      ]),
-    ]));
-
-    // CRM_Core_Payment_SquareDebugLogger::log("Creating Square subscription plan: {$name}");.
-    $response = $this->callSquare(fn (SquareClient $client) => $client->catalog->batchUpsert(new BatchUpsertCatalogObjectsRequest([
-      'idempotencyKey' => uniqid('plan_', TRUE),
-      'batches' => [new CatalogObjectBatch(['objects' => [$catalogObject]])],
-    ])));
-
-    $objects = $response->getObjects();
-    $planId = !empty($objects[0]) ? $objects[0]->getValue()->getId() : NULL;
-    if (!$planId) {
-      throw new CRM_Core_Exception('Failed to create Square subscription plan.');
-    }
-
-    $cache[$name] = $planId;
-    Civi::settings()->set('org_square_plan_cache', $cache);
-
-    return $planId;
-  }
-
-  /**
-   * Map Square payment statuses to CiviCRM contribution status IDs.
-   *
-   * @param string $squareStatus
-   *   Status from Square API (e.g., 'COMPLETED', 'PENDING', 'FAILED', 'CANCELED').
-   *
-   * @return int|null
-   *   CiviCRM contribution_status_id or NULL if unmapped.
-   */
-  protected function mapPaymentStatus($squareStatus) {
-    $squareStatus = strtoupper(trim($squareStatus));
-
-    switch ($squareStatus) {
-      case 'COMPLETED':
-      case 'APPROVED':
-        // Completed.
-        return 1;
-
-      case 'PENDING':
-      case 'PROCESSING':
-        // Pending.
-        return 2;
-
-      case 'FAILED':
-      case 'DECLINED':
-      case 'CANCELED':
-        // Failed.
-        return 4;
-
-      case 'REFUNDED':
-        // Refunded.
-        return 7;
-
-      default:
-        return NULL;
-    }
-  }
-
-  /**
-   * Map a Square source_type to a CiviCRM payment_instrument_id.
-   *
-   * Square source_type values: CARD, BANK_ACCOUNT, WALLET, CASH, EXTERNAL,
-   * BUY_NOW_PAY_LATER, SQUARE_ACCOUNT.
-   *
-   * CiviCRM defaults: 1=Credit Card, 2=Debit Card, 3=Cash, 4=Check, 5=EFT.
-   */
-  protected function mapPaymentInstrument(?string $sourceType): int {
-    switch (strtoupper((string) $sourceType)) {
-      case 'CARD':
-        // Apple Pay / Google Pay / Cash App Pay tokenize as cards.
-      case 'WALLET':
-      case 'BUY_NOW_PAY_LATER':
-      case 'SQUARE_ACCOUNT':
-        // Credit Card.
-        return 1;
-
-      case 'BANK_ACCOUNT':
-        // EFT.
-        return 5;
-
-      case 'CASH':
-        // Cash.
-        return 3;
-
-      default:
-        // Credit Card (Square's most common instrument)
-        return 1;
-    }
-  }
-
-  /**
-   * Find the contact ID associated with a Square payment.
-   *
-   * Attempts to resolve contact by:
-   * 1. Customer reference_id (if set in Square)
-   * 2. Email address from payment receipt
-   * 3. Contribution reference_id if payment is linked to existing contribution.
-   *
-   * @param array $payment
-   *   Payment object from Square API.
-   *
-   * @return int|null
-   *   CiviCRM contact ID or NULL if not found.
-   */
-  protected function findContactIdForPayment(array $payment) {
-    // 1. Try to find via customer reference_id
-    $customerId = $payment['customer_id'] ?? NULL;
-    if ($customerId) {
-      try {
-        $customerResponse = $this->buildSquareClient()->customers->get(new GetCustomersRequest(['customerId' => $customerId]));
-        $customer = $customerResponse->getCustomer();
-        if (!empty($customer) && !empty($customer->getReferenceId())) {
-          $refId = $customer->getReferenceId();
-          if (ctype_digit((string) $refId)) {
-            $contact = Contact::get(FALSE)
-              ->addWhere('id', '=', (int) $refId)
-              ->addSelect('id')
-              ->execute()
-              ->first();
-            if (!empty($contact)) {
-              return (int) $contact['id'];
-            }
-          }
-        }
-      }
-      catch (\Exception $e) {
-      }
-    }
-
-    // 2. Try via reference_id on payment (if it points to a contribution)
-    $referenceId = $payment['reference_id'] ?? NULL;
-    if ($referenceId && ctype_digit((string) $referenceId)) {
-      $contribution = Contribution::get(FALSE)
-        ->addWhere('id', '=', (int) $referenceId)
-        ->addWhere('is_test', 'IN', [TRUE, FALSE])
-        ->addSelect('contact_id')
-        ->execute()
-        ->first();
-      if (!empty($contribution)) {
-        return (int) $contribution['contact_id'];
-      }
-    }
-
-    // 3. Try via receipt email (if available)
-    $receiptEmail = $payment['receipt_email'] ?? NULL;
-    if ($receiptEmail) {
-      $contact = Contact::get(FALSE)
-        ->addWhere('email', '=', $receiptEmail)
-        ->addSelect('id')
-        ->execute()
-        ->first();
-      if (!empty($contact)) {
-        return (int) $contact['id'];
-      }
-    }
-
-    return NULL;
-  }
-
-  /**
    * Get webhook signature key from processor config.
    *
    * @return string|null
@@ -2474,16 +1132,6 @@ class CRM_Core_Payment_Square extends CRM_Core_Payment {
       return $this->_paymentProcessor['test_subject'] ?? $this->_paymentProcessor['subject'] ?? NULL;
     }
     return $this->_paymentProcessor['subject'] ?? NULL;
-  }
-
-  /**
-   * Handle subscription cancellation from Square webhook.
-   *
-   * @param array $payload
-   *   Full webhook payload from Square.
-   */
-  public function handleSubscriptionCanceled(array $payload) {
-    $this->handleSubscriptionCancelled($payload);
   }
 
   /**
@@ -2510,49 +1158,6 @@ class CRM_Core_Payment_Square extends CRM_Core_Payment {
 
     $subscriptionId = $payload['data']['object']['subscription']['id'];
     $this->syncSubscriptionFromSquare($subscriptionId);
-  }
-
-  /**
-   * Sync a Square subscription cancellation into CiviCRM.
-   *
-   * Called when Square sends subscription.canceled or subscription.deleted webhook.
-   *
-   * @param string $squareSubscriptionId
-   *   The subscription ID from Square.
-   *
-   * @throws \CRM_Core_Exception
-   */
-  public function syncSubscriptionCancellationFromSquare($squareSubscriptionId) {
-    CRM_Core_Payment_SquareDebugLogger::log("Square syncSubscriptionCancellationFromSquare(): called from SquareIPN for subscription_id={$squareSubscriptionId}.");
-    if (empty($squareSubscriptionId)) {
-      CRM_Core_Payment_SquareDebugLogger::log('Square syncSubscriptionCancellationFromSquare(): missing subscription ID, skipping.');
-      return;
-    }
-
-    // Find the recurring contribution linked to this subscription.
-    $recur = ContributionRecur::get(FALSE)
-      ->addWhere('processor_id', '=', $squareSubscriptionId)
-      ->addWhere('is_test', 'IN', [TRUE, FALSE])
-      ->addSelect('id', 'contribution_status_id')
-      ->execute()
-      ->first();
-
-    if (empty($recur)) {
-      CRM_Core_Payment_SquareDebugLogger::log("Square syncSubscriptionCancellationFromSquare(): no recurring contribution found for subscription {$squareSubscriptionId}, skipping.");
-      return;
-    }
-
-    $recurId = (int) $recur['id'];
-    CRM_Core_Payment_SquareDebugLogger::log("Square syncSubscriptionCancellationFromSquare(): found contribution_recur {$recurId} (current status {$recur['contribution_status_id']}) for subscription {$squareSubscriptionId}, marking Cancelled.");
-
-    // Update the recurring contribution to Cancelled (status_id = 3)
-    ContributionRecur::update(FALSE)
-      ->addWhere('id', '=', $recurId)
-    // Cancelled.
-      ->addValue('contribution_status_id', 3)
-      ->execute();
-
-    CRM_Core_Payment_SquareDebugLogger::log("Square syncSubscriptionCancellationFromSquare(): Updated recurring contribution {$recurId} to Cancelled for subscription {$squareSubscriptionId}.");
   }
 
   /**
@@ -2589,17 +1194,19 @@ class CRM_Core_Payment_Square extends CRM_Core_Payment {
     http_response_code(200);
     $rawData = file_get_contents('php://input');
 
+    // Returning ends the request: CRM_Core_Payment::handleIPN() calls
+    // CRM_Utils_System::civiExit() next.
     if (!$this->validateWebhookSignature($rawData, getallheaders())) {
-      Civi::log()->error('Square IPN: webhook signature validation failed.');
+      // Already logged.
       http_response_code(401);
-      exit();
+      return;
     }
 
     $payload = json_decode($rawData, TRUE);
     if (empty($payload)) {
       Civi::log()->error('Square IPN: invalid JSON body received.');
       http_response_code(400);
-      exit();
+      return;
     }
 
     CRM_Core_Payment_SquareDebugLogger::log('Square IPN: handlePaymentNotification() received webhook. event_id=' . ($payload['event_id'] ?? 'unknown') . ', type=' . ($payload['type'] ?? 'unknown') . ', processor_id=' . $this->getID());
@@ -2646,7 +1253,7 @@ class CRM_Core_Payment_Square extends CRM_Core_Payment {
 
     $provided = $normalised['x-square-hmacsha256-signature'] ?? NULL;
     if (!$provided) {
-      Civi::log()->error('Square IPN: X-Square-Signature header missing.');
+      Civi::log()->error('Square IPN: X-Square-Hmacsha256-Signature header missing.');
       return FALSE;
     }
 

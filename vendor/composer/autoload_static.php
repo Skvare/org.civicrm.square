@@ -18,19 +18,19 @@ class ComposerStaticInit48c2b53831468ad8cc35159079e7e76d
     );
 
     public static $prefixLengthsPsr4 = array (
-        'a' => 
+        'a' =>
         array (
             'apimatic\\jsonmapper\\' => 20,
         ),
-        'V' => 
+        'V' =>
         array (
             'VariableAnalysis\\' => 17,
         ),
-        'U' => 
+        'U' =>
         array (
             'Unirest\\' => 8,
         ),
-        'S' => 
+        'S' =>
         array (
             'Symfony\\Polyfill\\Php80\\' => 23,
             'Symfony\\Polyfill\\Mbstring\\' => 26,
@@ -40,7 +40,7 @@ class ComposerStaticInit48c2b53831468ad8cc35159079e7e76d
             'Square\\' => 7,
             'SlevomatCodingStandard\\' => 23,
         ),
-        'P' => 
+        'P' =>
         array (
             'Psr\\Log\\' => 8,
             'Psr\\Http\\Message\\' => 17,
@@ -49,144 +49,134 @@ class ComposerStaticInit48c2b53831468ad8cc35159079e7e76d
             'PHPStan\\PhpDocParser\\' => 21,
             'PHPCSStandards\\Composer\\Plugin\\Installers\\PHPCodeSniffer\\' => 57,
         ),
-        'G' => 
+        'G' =>
         array (
             'GuzzleHttp\\Psr7\\' => 16,
             'GuzzleHttp\\Promise\\' => 19,
             'GuzzleHttp\\' => 11,
         ),
-        'D' => 
+        'D' =>
         array (
             'Drupal\\' => 7,
             'DrupalPractice\\' => 15,
             'Doctrine\\Instantiator\\' => 22,
             'DeepCopy\\' => 9,
         ),
-        'C' => 
+        'C' =>
         array (
             'Core\\' => 5,
             'CoreInterfaces\\' => 15,
-            'CRM\\Tests\\' => 10,
-            'CRM\\' => 4,
         ),
     );
 
     public static $prefixDirsPsr4 = array (
-        'apimatic\\jsonmapper\\' => 
+        'apimatic\\jsonmapper\\' =>
         array (
             0 => __DIR__ . '/..' . '/apimatic/jsonmapper/src',
         ),
-        'VariableAnalysis\\' => 
+        'VariableAnalysis\\' =>
         array (
             0 => __DIR__ . '/..' . '/sirbrillig/phpcs-variable-analysis/VariableAnalysis',
         ),
-        'Unirest\\' => 
+        'Unirest\\' =>
         array (
             0 => __DIR__ . '/..' . '/apimatic/unirest-php/src',
         ),
-        'Symfony\\Polyfill\\Php80\\' => 
+        'Symfony\\Polyfill\\Php80\\' =>
         array (
             0 => __DIR__ . '/..' . '/symfony/polyfill-php80',
         ),
-        'Symfony\\Polyfill\\Mbstring\\' => 
+        'Symfony\\Polyfill\\Mbstring\\' =>
         array (
             0 => __DIR__ . '/..' . '/symfony/polyfill-mbstring',
         ),
-        'Symfony\\Polyfill\\Ctype\\' => 
+        'Symfony\\Polyfill\\Ctype\\' =>
         array (
             0 => __DIR__ . '/..' . '/symfony/polyfill-ctype',
         ),
-        'Symfony\\Component\\Yaml\\' => 
+        'Symfony\\Component\\Yaml\\' =>
         array (
             0 => __DIR__ . '/..' . '/symfony/yaml',
         ),
-        'Symfony\\Component\\HttpFoundation\\' => 
+        'Symfony\\Component\\HttpFoundation\\' =>
         array (
             0 => __DIR__ . '/..' . '/symfony/http-foundation',
         ),
-        'Square\\' => 
+        'Square\\' =>
         array (
             0 => __DIR__ . '/..' . '/square/square/src',
         ),
-        'SlevomatCodingStandard\\' => 
+        'SlevomatCodingStandard\\' =>
         array (
             0 => __DIR__ . '/..' . '/slevomat/coding-standard/SlevomatCodingStandard',
         ),
-        'Psr\\Log\\' => 
+        'Psr\\Log\\' =>
         array (
             0 => __DIR__ . '/..' . '/psr/log/src',
         ),
-        'Psr\\Http\\Message\\' => 
+        'Psr\\Http\\Message\\' =>
         array (
             0 => __DIR__ . '/..' . '/psr/http-factory/src',
             1 => __DIR__ . '/..' . '/psr/http-message/src',
         ),
-        'Psr\\Http\\Client\\' => 
+        'Psr\\Http\\Client\\' =>
         array (
             0 => __DIR__ . '/..' . '/psr/http-client/src',
         ),
-        'PhpParser\\' => 
+        'PhpParser\\' =>
         array (
             0 => __DIR__ . '/..' . '/nikic/php-parser/lib/PhpParser',
         ),
-        'PHPStan\\PhpDocParser\\' => 
+        'PHPStan\\PhpDocParser\\' =>
         array (
             0 => __DIR__ . '/..' . '/phpstan/phpdoc-parser/src',
         ),
-        'PHPCSStandards\\Composer\\Plugin\\Installers\\PHPCodeSniffer\\' => 
+        'PHPCSStandards\\Composer\\Plugin\\Installers\\PHPCodeSniffer\\' =>
         array (
             0 => __DIR__ . '/..' . '/dealerdirect/phpcodesniffer-composer-installer/src',
         ),
-        'GuzzleHttp\\Psr7\\' => 
+        'GuzzleHttp\\Psr7\\' =>
         array (
             0 => __DIR__ . '/..' . '/guzzlehttp/psr7/src',
         ),
-        'GuzzleHttp\\Promise\\' => 
+        'GuzzleHttp\\Promise\\' =>
         array (
             0 => __DIR__ . '/..' . '/guzzlehttp/promises/src',
         ),
-        'GuzzleHttp\\' => 
+        'GuzzleHttp\\' =>
         array (
             0 => __DIR__ . '/..' . '/guzzlehttp/guzzle/src',
         ),
-        'Drupal\\' => 
+        'Drupal\\' =>
         array (
             0 => __DIR__ . '/..' . '/drupal/coder/coder_sniffer/Drupal',
         ),
-        'DrupalPractice\\' => 
+        'DrupalPractice\\' =>
         array (
             0 => __DIR__ . '/..' . '/drupal/coder/coder_sniffer/DrupalPractice',
         ),
-        'Doctrine\\Instantiator\\' => 
+        'Doctrine\\Instantiator\\' =>
         array (
             0 => __DIR__ . '/..' . '/doctrine/instantiator/src/Doctrine/Instantiator',
         ),
-        'DeepCopy\\' => 
+        'DeepCopy\\' =>
         array (
             0 => __DIR__ . '/..' . '/myclabs/deep-copy/src/DeepCopy',
         ),
-        'Core\\' => 
+        'Core\\' =>
         array (
             0 => __DIR__ . '/..' . '/apimatic/core/src',
         ),
-        'CoreInterfaces\\' => 
+        'CoreInterfaces\\' =>
         array (
             0 => __DIR__ . '/..' . '/apimatic/core-interfaces/src',
-        ),
-        'CRM\\Tests\\' => 
-        array (
-            0 => __DIR__ . '/../..' . '/tests',
-        ),
-        'CRM\\' => 
-        array (
-            0 => __DIR__ . '/../..' . '/CRM',
         ),
     );
 
     public static $prefixesPsr0 = array (
-        'R' => 
+        'R' =>
         array (
-            'Rs\\Json' => 
+            'Rs\\Json' =>
             array (
                 0 => __DIR__ . '/..' . '/php-jsonpointer/php-jsonpointer/src',
             ),

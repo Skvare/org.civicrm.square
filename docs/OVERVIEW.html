@@ -340,7 +340,7 @@
     <section id="overview">
       <p class="kicker">Overview</p>
       <h2 class="section-title">What this extension does</h2>
-      <p class="lede">org.uschess.square registers Square as a CiviCRM payment processor type — the same role Stripe or PayPal extensions play — so contribution pages, event registration, and back-office forms can charge a Square-issued card without CiviCRM ever seeing the card number.</p>
+      <p class="lede">org.uschess.square registers Square as a CiviCRM payment processor type — the same role Stripe or PayPal extensions play — so contribution pages, event registration, and Drupal webforms can charge a Square-issued card without CiviCRM ever seeing the card number.</p>
       <p>It depends on two core CiviCRM extensions, <code>mjwshared</code> and <code>civi_contribute</code>, and is built against CiviCRM 6.16 or later. Composer dependencies ship committed in <code>vendor/</code>, so installing it is a normal extension enable — no build step. It is maintained by US Chess Federation and developed by Skvare, distributed under AGPL-3.0-or-later.</p>
       <div class="callout"><strong>Why it exists:</strong> US Chess needed dues, tournament entry, and donation payments to run through Square rather than the processors CiviCRM ships with out of the box, with the same card-on-file and recurring-billing experience members already expect from CiviCRM's native processors.</div>
     </section>
@@ -422,11 +422,11 @@
       <h2 class="section-title">What it handles</h2>
       <div class="grid-features">
         <div class="feature"><h3>One-time payments</h3><p>Card charges through Square's Payments API for contributions, event fees, and donations.</p></div>
-        <div class="feature"><h3>Recurring contributions</h3><p>Square Subscriptions API drives renewals; eight cadences from daily to annual.</p></div>
+        <div class="feature"><h3>Recurring contributions</h3><p>Square Subscriptions API drives renewals; thirteen cadences from daily to every two years.</p></div>
         <div class="feature"><h3>Refunds</h3><p>Full and partial refunds issued through Square's Refunds API from the CiviCRM contribution.</p></div>
-        <div class="feature"><h3>Subscription changes</h3><p>Cancellations and amount updates made in CiviCRM sync forward to the live Square subscription.</p></div>
+        <div class="feature"><h3>Subscription changes</h3><p>Cancellations and amount changes made in CiviCRM sync forward to the live Square subscription; a cancellation made in Square marks the recurring contribution Cancelled.</p></div>
         <div class="feature"><h3>Card-on-file</h3><p>Cards save as standard CiviCRM PaymentToken records — one contact can hold several across processors.</p></div>
-        <div class="feature"><h3>Customer deduplication</h3><p>Square customers are matched and reused by email and reference ID instead of duplicating on every charge.</p></div>
+        <div class="feature"><h3>Customer deduplication</h3><p>Square customers are matched and reused by reference ID and email instead of duplicating on every charge — but never shared between contacts, such as family members with one email address.</p></div>
         <div class="feature"><h3>Webhook reconciliation</h3><p>Every Square event is signature-verified, deduplicated, queued, and logged before it touches a record.</p></div>
         <div class="feature"><h3>Sandbox &amp; production</h3><p>Fully separate credentials and data per environment, switchable per processor instance.</p></div>
       </div>
@@ -444,7 +444,7 @@
             <tr><td class="mono">CRM/Core/Payment/SquareIPN.php</td><td>Webhook filtering, signature verification, deduplication, queue persistence, processing.</td></tr>
             <tr><td class="mono">CRM/Core/Payment/SquareDebugLogger.php</td><td>Opt-in diagnostic logging, gated by a setting so it's off by default.</td></tr>
             <tr><td class="mono">CRM/Square/Upgrader.php</td><td>Creates <code>square_customer_map</code>, migrates legacy data, drops the table on uninstall.</td></tr>
-            <tr><td class="mono">js/square.js</td><td>Mounts the Square card element and tokenizes on submit, across native, Webform, and backend forms.</td></tr>
+            <tr><td class="mono">js/square.js</td><td>Mounts the Square card element and tokenizes on submit, across native and Webform forms; keeps the card form's ZIP in step with the billing address's.</td></tr>
             <tr><td class="mono">managed/PaymentProcessorType.mgd.php</td><td>Registers "Square" as a selectable payment processor type.</td></tr>
           </tbody>
         </table>
@@ -493,19 +493,18 @@ xml/Menu/<span class="path">square.xml</span>            <span class="note">civi
     <section id="webhooks">
       <p class="kicker">Webhook events</p>
       <h2 class="section-title">What Square tells CiviCRM, and when</h2>
-      <p>Square posts to <code>https://your-site.org/civicrm/payment/ipn/{processor_id}</code>. The <code>X-Square-Hmacsha256-Signature</code> header is validated before anything is queued; a failed record stays in the queue for the <strong>Process Pending Webhooks</strong> scheduled job to retry.</p>
+      <p>Square posts to <code>https://your-site.org/civicrm/payment/ipn/{processor_id}</code>. The <code>X-Square-Hmacsha256-Signature</code> header is validated before anything is queued; a record that fails transiently stays in the queue (status <code>new</code>) for mjwshared's <strong>Process Payment Processor Webhooks</strong> scheduled job to retry.</p>
       <div class="table-wrap">
         <table>
           <thead><tr><th>Event</th><th>Action</th></tr></thead>
           <tbody>
             <tr><td class="mono">subscription.created</td><td>Syncs subscription status to ContributionRecur</td></tr>
-            <tr><td class="mono">subscription.updated</td><td>Syncs subscription status/amount to ContributionRecur</td></tr>
-            <tr><td class="mono">subscription.canceled</td><td>Marks ContributionRecur as Cancelled</td></tr>
-            <tr><td class="mono">invoice.created</td><td>Creates a Pending contribution for the upcoming invoice</td></tr>
-            <tr><td class="mono">invoice.payment_made</td><td>Reconciles the paid invoice</td></tr>
-            <tr><td class="mono">invoice.payment_failed</td><td>Reconciles the failed invoice</td></tr>
-            <tr><td class="mono">payment.updated</td><td>Reconciles an existing contribution</td></tr>
-            <tr><td class="mono">refund.created</td><td>Reconciles a refund</td></tr>
+            <tr><td class="mono">subscription.updated</td><td>Syncs subscription status/amount to ContributionRecur; a cancellation arrives here with a canceled_date (the status stays ACTIVE until then) and marks it Cancelled</td></tr>
+            <tr><td class="mono">invoice.created</td><td>Nothing is recorded: the invoice is still a draft Square has not charged</td></tr>
+            <tr><td class="mono">invoice.payment_made</td><td>Records the paid installment</td></tr>
+            <tr><td class="mono">invoice.scheduled_charge_failed</td><td>Marks the failed installment's contribution Failed</td></tr>
+            <tr><td class="mono">payment.updated</td><td>Completes a one-time contribution, or records a subscription installment; payments taken outside CiviCRM are ignored unless importing them is enabled in Square Settings</td></tr>
+            <tr><td class="mono">refund.created, refund.updated</td><td>Records a completed refund as a negative payment</td></tr>
           </tbody>
         </table>
       </div>
@@ -565,7 +564,7 @@ xml/Menu/<span class="path">square.xml</span>            <span class="note">civi
         <li>Create a Square payment processor in CiviCRM with sandbox Application ID, Access Token, Location ID, and Webhook Signature Key.</li>
         <li>In the Square Developer Dashboard, create a webhook subscription for that same sandbox application pointed at <code>/civicrm/payment/ipn/{processor_id}</code>.</li>
         <li>Subscribe to the eight events listed above — anything else is acknowledged but intentionally ignored.</li>
-        <li>Confirm CiviCRM's <strong>Process Pending Webhooks</strong> scheduled job is enabled, to retry failed deliveries.</li>
+        <li>Confirm mjwshared's <strong>Process Payment Processor Webhooks</strong> scheduled job is enabled, to retry transient failures.</li>
         <li>Run a test one-time contribution, and a test recurring one if it's in scope. Check the contribution, payment token, recurring record, and webhook queue all landed correctly.</li>
         <li>Only after sandbox checks out, repeat the setup with the production Square application and live credentials.</li>
       </ol>

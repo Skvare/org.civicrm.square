@@ -95,9 +95,8 @@ abstract class CRM_Core_Payment_Square_SquareUnitTestCase extends TestCase {
    *   Whatever the invoked method returns.
    */
   protected function callMethod(object $object, string $method, array $args = []) {
-    $reflection = new ReflectionMethod($object, $method);
-    $reflection->setAccessible(TRUE);
-    return $reflection->invokeArgs($object, $args);
+    // No setAccessible(): unnecessary since PHP 8.1, deprecated in PHP 8.5.
+    return (new ReflectionMethod($object, $method))->invokeArgs($object, $args);
   }
 
 }

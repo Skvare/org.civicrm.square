@@ -21,17 +21,12 @@ return [
       // Public payment-processor class in CRM/Core/Payment/Square.php.
       'class_name'  => 'Payment_Square',
 
-      // Admin form labels (live credentials).
+      // Admin form labels, for the live and the test credentials alike
+      // (payment_processor_type has no separate test labels).
       'user_name_label' => 'Square Application ID',
       'password_label'  => 'Square Access Token',
       'signature_label' => 'Square Location ID',
       'subject_label'   => 'Square Webhook Signature Key',
-
-      // Admin form labels (test credentials)
-      'test_user_name_label' => 'Square Application ID (Test)',
-      'test_password_label'  => 'Square Access Token (Test)',
-      'test_signature_label' => 'Square Location ID (Test)',
-      'test_subject_label'   => 'Square Webhook Signature Key (Test)',
 
       // Base URLs – we mostly use the SDK, but Civi still likes these sane defaults.
       // LIVE.
@@ -49,8 +44,8 @@ return [
       // 1 = credit card
       'payment_type' => 1,
 
-      // Capabilities are advertised by CRM_Core_Payment_Square.  These fields
-      // are not valid payment_processor_type managed properties in CiviCRM.
+      // Supports recurring contributions (see also
+      // CRM_Core_Payment_Square::supportsRecurring()).
       'is_recur'        => 1,
     ],
   ],

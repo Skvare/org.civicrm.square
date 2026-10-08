@@ -1,0 +1,25 @@
+# Static analysis against CiviCRM core's own classes.
+#
+# Set CIVICRM_CORE to a CiviCRM 6.16 source tree (e.g. an extracted release
+# tarball), then run: phpstan analyse -c phpstan.neon.dist
+includes:
+  - phpstan-baseline.neon
+
+parameters:
+  level: 5
+  paths:
+    - CRM
+    - square.php
+  scanDirectories:
+    - %env.CIVICRM_CORE%/CRM
+    - %env.CIVICRM_CORE%/Civi
+    - %env.CIVICRM_CORE%/api
+    - %env.CIVICRM_CORE%/ext/civi_contribute
+    - %env.CIVICRM_CORE%/vendor/pear
+  scanFiles:
+    - %env.CIVICRM_CORE%/Civi.php
+    - %env.CIVICRM_CORE%/functions.php
+    - square.civix.php
+    - tests/phpstan/stubs.php
+  bootstrapFiles:
+    - vendor/autoload.php

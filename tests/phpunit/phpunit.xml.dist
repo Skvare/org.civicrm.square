@@ -7,7 +7,8 @@
   backupStaticAttributes="false"
   convertWarningsToExceptions="true"
   convertErrorsToExceptions="true"
-  convertNoticesToExceptions="false"
+  convertNoticesToExceptions="true"
+  convertDeprecationsToExceptions="true"
 >
 
   <testsuites>
