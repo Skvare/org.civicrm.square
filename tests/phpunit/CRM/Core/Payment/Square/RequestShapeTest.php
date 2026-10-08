@@ -4,7 +4,6 @@ require_once __DIR__ . '/SquareUnitTestCase.php';
 
 use Civi\Payment\Exception\PaymentProcessorException;
 use Square\SquareClient;
-use Square\Types\Money;
 use Square\Cards\Requests\CreateCardRequest;
 use Square\Cards\CardsClient;
 use Square\Payments\PaymentsClient;
