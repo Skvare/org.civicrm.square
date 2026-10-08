@@ -15,6 +15,15 @@ class CRM_Core_Payment_Square_RefundTest extends CRM_Core_Payment_Square_SquareL
   protected function setUp(): void {
     parent::setUp();
     $this->payFirstInstallment();
+    $lock = $this->getMockBuilder(stdClass::class)->addMethods(['isAcquired', 'release'])->getMock();
+    $lock->method('isAcquired')->willReturn(TRUE);
+    Civi::$lockManager = $this->getMockBuilder(stdClass::class)->addMethods(['acquire'])->getMock();
+    Civi::$lockManager->method('acquire')->willReturn($lock);
+  }
+
+  protected function tearDown(): void {
+    Civi::$lockManager = NULL;
+    parent::tearDown();
   }
 
   public function testPendingRefundRecordsNothing(): void {
@@ -116,6 +125,108 @@ class CRM_Core_Payment_Square_RefundTest extends CRM_Core_Payment_Square_SquareL
     $this->deliver($this->refundEvent('refund.updated', 'COMPLETED', 1900));
 
     $this->assertCount(1, $this->refunds());
+  }
+
+  public function testAdminRefundCompletedWhileAcquiringLockIsNotRecordedTwice(): void {
+    $lock = $this->getMockBuilder(stdClass::class)->addMethods(['isAcquired', 'release'])->getMock();
+    $lock->method('isAcquired')->willReturn(TRUE);
+    $lock->expects($this->once())->method('release');
+    Civi::$lockManager = $this->getMockBuilder(stdClass::class)->addMethods(['acquire'])->getMock();
+    Civi::$lockManager->expects($this->once())->method('acquire')
+      ->with('data.contribute.contribution.' . self::SIGNUP_CONTRIBUTION_ID)
+      ->willReturnCallback(function () use ($lock) {
+        // The admin action finishes recording while the webhook waits for
+        // its contribution lock. The duplicate lookup must happen afterwards.
+        $this->processor->payments[800] = [
+          'contribution_id' => self::SIGNUP_CONTRIBUTION_ID,
+          'trxn_id' => self::REFUND_ID,
+          'total_amount' => -5.00,
+          'payment_processor_id' => self::PROCESSOR_ID,
+        ];
+        return $lock;
+      });
+
+    $this->deliver($this->refundEvent('refund.updated', 'COMPLETED', 500));
+
+    $this->assertCount(1, $this->refunds());
+    $this->assertSame(-5.00, array_sum(array_column($this->refunds(), 'total_amount')));
+  }
+
+  public function testBusyContributionLockLeavesRefundForRetry(): void {
+    $lock = $this->getMockBuilder(stdClass::class)->addMethods(['isAcquired', 'release'])->getMock();
+    $lock->method('isAcquired')->willReturn(FALSE);
+    $lock->expects($this->never())->method('release');
+    Civi::$lockManager = $this->getMockBuilder(stdClass::class)->addMethods(['acquire'])->getMock();
+    Civi::$lockManager->expects($this->once())->method('acquire')
+      ->with('data.contribute.contribution.' . self::SIGNUP_CONTRIBUTION_ID)->willReturn($lock);
+
+    try {
+      $this->deliver($this->refundEvent('refund.updated', 'COMPLETED', 500));
+      $this->fail('Lock contention must leave the webhook for retry.');
+    }
+    catch (CRM_Core_Payment_SquareRetryableException $e) {
+      $this->assertStringContainsString('Could not acquire lock', $e->getMessage());
+    }
+    $this->assertSame([], $this->refunds());
+  }
+
+  public function testContributionLockCoversDuplicateCheckAndWrite(): void {
+    $held = FALSE;
+    $lock = $this->getMockBuilder(stdClass::class)->addMethods(['isAcquired', 'release'])->getMock();
+    $lock->method('isAcquired')->willReturn(TRUE);
+    $lock->expects($this->once())->method('release')->willReturnCallback(function () use (&$held) {
+      $held = FALSE;
+    });
+    Civi::$lockManager = $this->getMockBuilder(stdClass::class)->addMethods(['acquire'])->getMock();
+    Civi::$lockManager->expects($this->once())->method('acquire')
+      ->with('data.contribute.contribution.' . self::SIGNUP_CONTRIBUTION_ID)
+      ->willReturnCallback(function () use ($lock, &$held) {
+        $held = TRUE;
+        return $lock;
+      });
+    $reconciler = $this->getMockBuilder(CRM_Core_Payment_Square_FakeLedgerReconciler::class)
+      ->setConstructorArgs([$this->callMethod($this->processor, 'gateway'), $this->processor])
+      ->onlyMethods(['findContributionPayment', 'recordRefundPayment'])->getMock();
+    $reconciler->expects($this->once())->method('findContributionPayment')
+      ->with(self::SIGNUP_CONTRIBUTION_ID, self::REFUND_ID)
+      ->willReturnCallback(function () use (&$held) {
+        $this->assertTrue($held, 'The duplicate check must hold the contribution lock.');
+        return NULL;
+      });
+    $reconciler->expects($this->once())->method('recordRefundPayment')
+      ->willReturnCallback(function () use (&$held) {
+        $this->assertTrue($held, 'The refund write must still hold the contribution lock.');
+      });
+
+    $event = $this->refundEvent('refund.updated', 'COMPLETED', 500);
+    $reconciler->syncRefundFromSquare($event['data']['object']['refund']);
+
+    $this->assertFalse($held);
+  }
+
+  /**
+   * @dataProvider failingRefundOperationProvider
+   */
+  public function testContributionLockReleasedOnFailure(string $operation): void {
+    $lock = $this->getMockBuilder(stdClass::class)->addMethods(['isAcquired', 'release'])->getMock();
+    $lock->method('isAcquired')->willReturn(TRUE);
+    $lock->expects($this->once())->method('release');
+    Civi::$lockManager = $this->getMockBuilder(stdClass::class)->addMethods(['acquire'])->getMock();
+    Civi::$lockManager->expects($this->once())->method('acquire')
+      ->with('data.contribute.contribution.' . self::SIGNUP_CONTRIBUTION_ID)->willReturn($lock);
+    $reconciler = $this->getMockBuilder(CRM_Core_Payment_Square_FakeLedgerReconciler::class)
+      ->setConstructorArgs([$this->callMethod($this->processor, 'gateway'), $this->processor])
+      ->onlyMethods([$operation])->getMock();
+    $reconciler->expects($this->once())->method($operation)->willThrowException(new RuntimeException('Ledger failed.'));
+
+    $event = $this->refundEvent('refund.updated', 'COMPLETED', 500);
+    $this->expectException(RuntimeException::class);
+    $this->expectExceptionMessage('Ledger failed.');
+    $reconciler->syncRefundFromSquare($event['data']['object']['refund']);
+  }
+
+  public static function failingRefundOperationProvider(): array {
+    return [['findContributionPayment'], ['recordRefundPayment']];
   }
 
   /**

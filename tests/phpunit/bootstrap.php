@@ -340,7 +340,7 @@ if (!class_exists('Civi')) {
   /**
    * Minimal stand-in for CiviCRM's Civi service locator.
    *
-   * Only settings() and log() are provided. Log calls are recorded in
+   * Settings, logging and an injectable lock manager are provided. Logs go to
    * Civi::$logged so tests can assert reconciliation errors were raised.
    */
   class Civi {
@@ -358,6 +358,23 @@ if (!class_exists('Civi')) {
      * @var array
      */
     public static array $settings = [];
+
+    /**
+     * Lock manager supplied by tests exercising contribution locks.
+     *
+     * @var object|null
+     */
+    public static ?object $lockManager = NULL;
+
+    /**
+     * @return object
+     */
+    public static function lockManager() {
+      if (self::$lockManager === NULL) {
+        throw new LogicException('No test lock manager configured.');
+      }
+      return self::$lockManager;
+    }
 
     /**
      * @return object

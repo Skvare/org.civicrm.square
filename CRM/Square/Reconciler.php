@@ -1312,15 +1312,7 @@ class CRM_Square_Reconciler {
       return;
     }
 
-    // refund.created and refund.updated can both report COMPLETED, in
-    // separate concurrent requests.
-    $lock = $this->acquireSquareLock('refund.' . $refundId);
-    try {
-      $this->recordSquareRefund($refund, $refundAmount);
-    }
-    finally {
-      $lock->release();
-    }
+    $this->recordSquareRefund($refund, $refundAmount);
   }
 
   /**
@@ -1365,34 +1357,44 @@ class CRM_Square_Reconciler {
     }
     $contributionId = (int) $original['contribution_id'];
 
-    // Idempotency: a replayed webhook (or refund.created and refund.updated
-    // both reporting COMPLETED), or a refund CiviCRM already recorded when
-    // staff refunded from CiviCRM (see doRefund()), must not refund twice.
-    if ($this->findContributionPayment($contributionId, $refundId)) {
-      CRM_Core_Payment_SquareDebugLogger::log("Square syncRefundFromSquare(): refund {$refundId} already recorded for contribution {$contributionId}, skipping.");
-      return;
+    // Share MJWShared's PaymentMJW.Refund lock so admin refunds and concurrent
+    // webhooks serialize the duplicate check and Payment.create together.
+    $lock = Civi::lockManager()->acquire('data.contribute.contribution.' . $contributionId);
+    if (!$lock->isAcquired()) {
+      throw new CRM_Core_Payment_SquareRetryableException("Could not acquire lock to record Square refund {$refundId} for contribution {$contributionId}.");
     }
+    try {
+      // Recheck after acquiring the lock: the admin action or another webhook
+      // may have recorded this refund while we waited.
+      if ($this->findContributionPayment($contributionId, $refundId)) {
+        CRM_Core_Payment_SquareDebugLogger::log("Square syncRefundFromSquare(): refund {$refundId} already recorded for contribution {$contributionId}, skipping.");
+        return;
+      }
 
-    $refundParams = [
-      'contribution_id' => $contributionId,
-      'total_amount' => -$refundAmount,
-      'trxn_id' => $refundId,
-      'trxn_date' => $this->squareTimestampToCivi($refund['updated_at'] ?? $refund['created_at'] ?? NULL),
-      'payment_processor_id' => $this->gateway->processorId(),
-      'is_send_contribution_notification' => 0,
-    ];
-    // A full refund is linked to the refunded payment, as CiviCRM's own
-    // Payment.cancel does. Not a partial one: Payment.create reverses every
-    // allocation of the cancelled payment in full, whatever the refund
-    // amount. A partial refund is allocated across the line items instead.
-    $currency = $refund['amount_money']['currency'] ?? NULL;
-    $isFullRefund = CRM_Square_Currency::toMinorUnits($refundAmount, $currency) === CRM_Square_Currency::toMinorUnits($original['total_amount'], $currency);
-    if ($isFullRefund) {
-      $refundParams['cancelled_payment_id'] = (int) $original['id'];
+      $refundParams = [
+        'contribution_id' => $contributionId,
+        'total_amount' => -$refundAmount,
+        'trxn_id' => $refundId,
+        'trxn_date' => $this->squareTimestampToCivi($refund['updated_at'] ?? $refund['created_at'] ?? NULL),
+        'payment_processor_id' => $this->gateway->processorId(),
+        'is_send_contribution_notification' => 0,
+      ];
+      // A full refund is linked to the refunded payment, as CiviCRM's own
+      // Payment.cancel does. Not a partial one: Payment.create reverses every
+      // allocation of the cancelled payment in full, whatever the refund
+      // amount. A partial refund is allocated across the line items instead.
+      $currency = $refund['amount_money']['currency'] ?? NULL;
+      $isFullRefund = CRM_Square_Currency::toMinorUnits($refundAmount, $currency) === CRM_Square_Currency::toMinorUnits($original['total_amount'], $currency);
+      if ($isFullRefund) {
+        $refundParams['cancelled_payment_id'] = (int) $original['id'];
+      }
+      $this->recordRefundPayment($refundParams);
+
+      CRM_Core_Payment_SquareDebugLogger::log("Square syncRefundFromSquare(): recorded refund {$refundId} ({$refundAmount}) against contribution {$contributionId}" . ($isFullRefund ? ", cancelling payment {$original['id']}." : '.'));
     }
-    $this->recordRefundPayment($refundParams);
-
-    CRM_Core_Payment_SquareDebugLogger::log("Square syncRefundFromSquare(): recorded refund {$refundId} ({$refundAmount}) against contribution {$contributionId}" . ($isFullRefund ? ", cancelling payment {$original['id']}." : '.'));
+    finally {
+      $lock->release();
+    }
   }
 
   /**
