@@ -426,6 +426,36 @@ class CRM_Core_Payment_Square_RecurringInstallmentTest extends CRM_Core_Payment_
   }
 
   /**
+   * A failure of the first invoice delivered after it was paid creates nothing.
+   *
+   * Square does not deliver webhooks in order, and retries a failed charge.
+   * The checkout's contribution carries CiviCRM's invoice ID, not Square's,
+   * so only Square's current invoice status shows the failure is stale.
+   */
+  public function testDelayedFailureOfAPaidFirstInstallmentCreatesNothing(): void {
+    $this->payFirstInstallment();
+
+    $this->deliver($this->invoiceScheduledChargeFailedEvent(self::FIRST));
+
+    $this->assertCount(1, $this->seriesContributions());
+    $this->assertSame([], $this->processor->repeatCalls);
+    $this->assertSame('Completed', $this->processor->contributions[self::SIGNUP_CONTRIBUTION_ID]['status']);
+  }
+
+  /**
+   * A failure of a later invoice delivered after it was paid leaves it Completed.
+   */
+  public function testDelayedFailureOfAPaidLaterInstallmentLeavesItCompleted(): void {
+    $this->payFirstInstallment();
+    $this->squareBills(self::SECOND);
+    $this->deliver($this->invoicePaymentMadeEvent(self::SECOND));
+
+    $this->deliver($this->invoiceScheduledChargeFailedEvent(self::SECOND));
+
+    $this->assertSame(['Completed', 'Completed'], array_column($this->seriesContributions(), 'status'));
+  }
+
+  /**
    * A one-time payment Square cancels after checkout left it Pending is marked Failed.
    */
   public function testCanceledOneTimePaymentMarksItsPendingContributionFailed(): void {

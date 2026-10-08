@@ -42,7 +42,8 @@ refund that is still `PENDING`.
    - `success` when processed;
    - `new` after a transient failure — Square unavailable (network error,
      HTTP 5xx or 429), or a related CiviCRM record not visible yet because
-     webhooks arrived before the checkout finished saving. The
+     webhooks arrived before the checkout finished saving, or out of order
+     (e.g. a refund before the payment it refunds). The
      **Process Payment Processor Webhooks** scheduled job retries `new`
      records on every run, for up to 72 hours after the event arrived;
    - `error` for anything else, including an amount mismatch (see below).
@@ -80,6 +81,32 @@ not the subscription, so it is matched to its invoice at Square.
   already sent a receipt (webform_civicrm does), otherwise according to the
   recurring contribution's **Send email receipt** setting. Later installments
   are not receipted.
+- If checkout could not confirm the subscription (e.g. Square's response
+  timed out), the recurring contribution has no subscription ID, but Square
+  still bills the subscription. The first webhook about it links the two,
+  from the recurring contribution and contact checkout stored in the
+  subscription's source — only if that recurring contribution belongs to this
+  processor and is not linked yet, and its contact is the one this processor
+  mapped the subscription's Square customer to. Each link made this way is
+  logged as a warning.
+- A failed charge (`invoice.scheduled_charge_failed`) is checked against the
+  invoice's current status at Square: if it has been paid since (webhooks can
+  arrive out of order, and Square retries failed charges), nothing is marked
+  Failed.
+
+## Refunds
+
+- Refunds made from CiviCRM's refund form (`doRefund()`) are recorded only
+  once Square has completed them. Square accepts a card refund as `PENDING`
+  until it has the funds, which can take a while and can end in `FAILED`.
+  `doRefund()` checks on it for a few seconds; one still `PENDING` is reported
+  to staff as not recorded yet, and `refund.updated` records it when Square
+  completes it. Don't refund the payment again in the meantime.
+- Refunds made in the Square Dashboard are recorded from `refund.updated` once
+  completed.
+- A refund that arrives before the payment it refunds is recorded is retried
+  (for 30 minutes after Square created it), since Square does not deliver
+  webhooks in order.
 
 ## Troubleshooting
 

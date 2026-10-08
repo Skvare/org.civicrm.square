@@ -10,6 +10,7 @@
 | `CRM/Square/Subscriptions.php` | Catalog subscription plans and plan variations (cached per processor), and changes to or cancellation of subscriptions. |
 | `CRM/Square/Reconciler.php` | Webhook-driven sync into CiviCRM: payments, subscription installments, refunds, and recurring status. Its protected find/record methods are its only CiviCRM data access. |
 | `CRM/Square/Status.php` | CiviCRM option values by name, and Square-to-CiviCRM status mappings. |
+| `CRM/Square/Currency.php` | Conversion between CiviCRM amounts and Square's smallest currency units (cents for USD, whole yen for JPY). |
 | `CRM/Core/Payment/SquareIPN.php` | Webhook filtering, deduplication, queue persistence, and processing. |
 | `CRM/Core/Payment/SquareDebugLogger.php` | Opt-in diagnostic logging. |
 | `CRM/Square/Upgrader.php` | Schema creation, migration, and cleanup. |
@@ -40,7 +41,16 @@ Failures are reported as CiviCRM's checkout expects:
   check in the Square Dashboard. A contribution page keeps its Pending
   contribution, for the `payment.updated` webhook to complete if the charge
   went through. Event registration only handles `PaymentProcessorException`,
-  so there it is converted to one.
+  so there it is converted to one. For a recurring checkout, the recurring
+  contribution is linked to its subscription later, from the subscription's
+  webhooks (see [WEBHOOKS.md](WEBHOOKS.md#recurring-installments)).
+
+Refunds made from CiviCRM (`doRefund()`) are recorded only once Square has
+completed them. Square accepts a card refund as `PENDING` until it has the
+funds; `doRefund()` checks on it for a few seconds, and a refund still
+`PENDING` then is reported to staff as not yet recorded, and is recorded by
+the `refund.updated` webhook when Square completes it. A refund Square
+rejects or fails is never recorded.
 
 Raw card details do not pass through CiviCRM. Recurring contributions create or
 reuse Square Catalog plans and variations, then link the Square subscription to

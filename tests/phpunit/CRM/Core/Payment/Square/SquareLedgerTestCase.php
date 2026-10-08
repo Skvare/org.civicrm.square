@@ -17,6 +17,7 @@ use Square\Types\Invoice;
 use Square\Types\GetOrderResponse;
 use Square\Orders\OrdersClient;
 use Square\Types\SearchInvoicesResponse;
+use Square\Types\GetInvoiceResponse;
 use Square\Invoices\InvoicesClient;
 use Square\Subscriptions\SubscriptionsClient;
 use Square\Types\GetSubscriptionResponse;
@@ -66,6 +67,13 @@ class CRM_Core_Payment_Square_FakeLedgerProcessor extends CRM_Core_Payment_Squar
    * @var array
    */
   public array $createCalls = [];
+
+  /**
+   * Contacts this processor mapped Square customers to, by customer ID.
+   *
+   * @var array
+   */
+  public array $customerContacts = [];
 
   /**
    * Square card ID getRecurCardId() returns.
@@ -255,6 +263,30 @@ class CRM_Core_Payment_Square_FakeLedgerReconciler extends CRM_Square_Reconciler
       }
     }
     return NULL;
+  }
+
+  /**
+   * @param int $recurId
+   *
+   * @return array|null
+   */
+  protected function findRecurById(int $recurId): ?array {
+    $recur = $this->ledger->recurs[$recurId] ?? NULL;
+    if ($recur
+      && $recur['payment_processor_id'] === $this->gateway->processorId()
+      && (bool) $recur['is_test'] === $this->gateway->isTestMode()) {
+      return $recur;
+    }
+    return NULL;
+  }
+
+  /**
+   * @param string $customerId
+   *
+   * @return int|null
+   */
+  protected function findContactIdBySquareCustomer(string $customerId): ?int {
+    return $this->ledger->customerContacts[$customerId] ?? NULL;
   }
 
   /**
@@ -633,6 +665,9 @@ abstract class CRM_Core_Payment_Square_SquareLedgerTestCase extends CRM_Core_Pay
       $this->invoiceSearches++;
       return new SearchInvoicesResponse(['invoices' => array_values($this->squareInvoices)]);
     });
+    $invoices->method('get')->willReturnCallback(fn ($request) => new GetInvoiceResponse([
+      'invoice' => $this->squareInvoices[$request->getInvoiceId()] ?? NULL,
+    ]));
     $orders = $this->createMock(OrdersClient::class);
     $orders->method('get')->willReturnCallback(fn ($request) => new GetOrderResponse([
       'order' => $this->squareOrders[$request->getOrderId()] ?? NULL,
@@ -657,6 +692,7 @@ abstract class CRM_Core_Payment_Square_SquareLedgerTestCase extends CRM_Core_Pay
    * @param \CRM_Core_Payment_Square_FakeLedgerProcessor $processor
    */
   protected function seedCheckout(CRM_Core_Payment_Square_FakeLedgerProcessor $processor): void {
+    $processor->customerContacts[self::CUSTOMER_ID] = 7;
     $processor->recurs[self::RECUR_ID] = [
       'id' => self::RECUR_ID,
       'contact_id' => 7,

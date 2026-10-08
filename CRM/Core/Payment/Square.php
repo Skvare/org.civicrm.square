@@ -11,7 +11,9 @@ use Square\Types\Money;
 use Square\Types\SubscriptionSource;
 use Square\Payments\Requests\CreatePaymentRequest;
 use Square\Subscriptions\Requests\CreateSubscriptionRequest;
+use Square\Refunds\Requests\GetRefundsRequest;
 use Square\Refunds\Requests\RefundPaymentRequest;
+use Square\Types\PaymentRefund;
 
 require_once E::path() . '/vendor/autoload.php';
 /**
@@ -33,6 +35,16 @@ require_once E::path() . '/vendor/autoload.php';
  *  - CRM_Square_Reconciler: webhook-driven sync into CiviCRM's ledger.
  */
 class CRM_Core_Payment_Square extends CRM_Core_Payment {
+
+  /**
+   * How many times doRefund() checks on a refund Square has not completed yet.
+   */
+  protected const REFUND_STATUS_CHECKS = 5;
+
+  /**
+   * Microseconds between those checks.
+   */
+  protected const REFUND_STATUS_CHECK_INTERVAL = 1000000;
 
   /**
    * Payment-processor instance configuration.
@@ -495,8 +507,8 @@ class CRM_Core_Payment_Square extends CRM_Core_Payment {
     // Persist it back into $params so downstream code can see it.
     $params['square_payment_token'] = $token;
 
-    $amountCents = (int) round(((float) $amount) * 100);
     $currency = $params['currency'] ?? $params['currencyID'] ?? 'USD';
+    $amountMinorUnits = CRM_Square_Currency::toMinorUnits($amount, $currency);
 
     // 3. Idempotency key, derived from the checkout's own reference so that a
     // retried request for the same checkout can never charge twice. Every
@@ -512,7 +524,7 @@ class CRM_Core_Payment_Square extends CRM_Core_Payment {
     $requestValues = [
       'idempotencyKey' => $idempotencyKey,
       'sourceId' => $token,
-      'amountMoney' => new Money(['amount' => $amountCents, 'currency' => $currency]),
+      'amountMoney' => new Money(['amount' => $amountMinorUnits, 'currency' => $currency]),
       'locationId' => $this->getLocationId(),
     ];
 
@@ -753,13 +765,21 @@ class CRM_Core_Payment_Square extends CRM_Core_Payment {
   /**
    * Perform a refund via Square Refunds API.
    *
+   * Only a refund Square has completed is reported: refund_status
+   * 'Completed' is what CiviCRM and mjwshared's refund form record, and the
+   * only status that form accepts. Square accepts a card refund as PENDING
+   * until it has the funds, which can take far longer than this request and
+   * can end in FAILED, so a refund still PENDING after a short wait is
+   * reported as an error and left for the refund.updated webhook to record
+   * once Square completes it (see CRM_Square_Reconciler::syncRefundFromSquare()).
+   *
    * @param array $params
    *   trxn_id (the Square payment ID) and amount; currency is optional, and
    *   ignored in favour of the payment's own.
    *
    * @return array
-   *   refund_trxn_id (the Square refund ID), refund_status ('Completed', as
-   *   CiviCRM and mjwshared's refund form expect), trxn_date and fee_amount.
+   *   refund_trxn_id (the Square refund ID), refund_status ('Completed'),
+   *   trxn_date and fee_amount.
    *
    * @throws \Civi\Payment\Exception\PaymentProcessorException
    */
@@ -774,8 +794,7 @@ class CRM_Core_Payment_Square extends CRM_Core_Payment {
     }
 
     $rawAmount = (float) $params['amount'];
-    $amountInCents = (int) round($rawAmount * 100);
-    if ($amountInCents <= 0) {
+    if ($rawAmount <= 0) {
       throw new PaymentProcessorException('Refund amount must be greater than zero.');
     }
 
@@ -784,6 +803,10 @@ class CRM_Core_Payment_Square extends CRM_Core_Payment {
       // refund form does not always pass on.
       [$paymentCurrency, $refundCount] = $this->getRefundContext((string) $trxnId);
       $currency = $paymentCurrency ?? $params['currencyID'] ?? $params['currency'] ?? 'USD';
+      $amountMinorUnits = CRM_Square_Currency::toMinorUnits($rawAmount, $currency);
+      if ($amountMinorUnits <= 0) {
+        throw new PaymentProcessorException('Refund amount must be greater than zero.');
+      }
 
       // The key changes once CiviCRM has recorded a refund, so a further
       // refund of the same amount is a new refund — not mistaken by Square
@@ -791,12 +814,15 @@ class CRM_Core_Payment_Square extends CRM_Core_Payment {
       // then it does not change, so a retry of a refund whose outcome was
       // lost gets Square's original refund back instead of a second one.
       $refundRequest = new RefundPaymentRequest([
-        'idempotencyKey' => $this->idempotencyKey('refund', "{$trxnId}:{$amountInCents}:{$refundCount}"),
+        'idempotencyKey' => $this->idempotencyKey('refund', "{$trxnId}:{$amountMinorUnits}:{$refundCount}"),
         'paymentId' => $trxnId,
-        'amountMoney' => new Money(['amount' => $amountInCents, 'currency' => $currency]),
+        'amountMoney' => new Money(['amount' => $amountMinorUnits, 'currency' => $currency]),
       ]);
 
       $refund = $this->createRefund($refundRequest)->getRefund();
+      if (!empty($refund) && !empty($refund->getId())) {
+        $refund = $this->awaitRefundOutcome($refund);
+      }
     }
     catch (PaymentProcessorException $e) {
       throw $e;
@@ -810,11 +836,10 @@ class CRM_Core_Payment_Square extends CRM_Core_Payment {
     }
 
     $status = strtoupper($refund->getStatus() ?? 'UNKNOWN');
-    // Square accepts a refund as PENDING and completes it moments later (or,
-    // rarely, rejects it: CRM_Square_Reconciler::syncRefundFromSquare() logs
-    // that for follow-up). It is reported Completed so CiviCRM records it
-    // now; the refund.* webhooks find it by its ID and record nothing more.
-    if (!in_array($status, ['PENDING', 'COMPLETED', 'APPROVED'], TRUE)) {
+    if ($status === 'PENDING') {
+      throw new PaymentProcessorException(E::ts('Square accepted refund %1 but has not completed it yet, so it is not recorded in CiviCRM now. It will be recorded automatically once Square completes it. Do not refund this payment again.', [1 => $refund->getId()]));
+    }
+    if (!in_array($status, ['COMPLETED', 'APPROVED'], TRUE)) {
       throw new PaymentProcessorException("Square refund not completed. Status: {$status}");
     }
 
@@ -854,6 +879,54 @@ class CRM_Core_Payment_Square extends CRM_Core_Payment {
       ->execute()
       ->count();
     return [$payment['currency'] ?? NULL, $refundCount];
+  }
+
+  /**
+   * Wait briefly for Square to complete a refund it accepted as PENDING.
+   *
+   * Most card refunds complete within seconds. One Square has to fund from
+   * the seller's bank account can stay PENDING much longer, and may fail.
+   *
+   * @param \Square\Types\PaymentRefund $refund
+   *
+   * @return \Square\Types\PaymentRefund
+   *   The refund as Square last reported it.
+   */
+  protected function awaitRefundOutcome(PaymentRefund $refund): PaymentRefund {
+    for ($check = 0; $check < self::REFUND_STATUS_CHECKS && strtoupper((string) $refund->getStatus()) === 'PENDING'; $check++) {
+      $this->pause(self::REFUND_STATUS_CHECK_INTERVAL);
+      try {
+        $refund = $this->getRefund((string) $refund->getId()) ?? $refund;
+      }
+      catch (\Throwable $e) {
+        // The refund exists at Square either way; report what is known.
+        \Civi::log('square')->warning("Square: could not check on refund {$refund->getId()}: " . $e->getMessage());
+        break;
+      }
+    }
+    return $refund;
+  }
+
+  /**
+   * A refund as Square currently reports it.
+   *
+   * @param string $refundId
+   *
+   * @return \Square\Types\PaymentRefund|null
+   *
+   * @throws \CRM_Core_Exception
+   */
+  protected function getRefund(string $refundId): ?PaymentRefund {
+    return $this->callSquare(fn (SquareClient $client) => $client->refunds->get(new GetRefundsRequest(['refundId' => $refundId])))->getRefund();
+  }
+
+  /**
+   * Wait, between checks on a refund.
+   *
+   * @param int $microseconds
+   */
+  protected function pause(int $microseconds): void {
+    usleep($microseconds);
   }
 
   /**

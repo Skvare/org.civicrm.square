@@ -25,7 +25,10 @@ class CRM_Core_Payment_Square_RefundTest extends CRM_Core_Payment_Square_SquareL
   }
 
   /**
-   * CiviCRM recorded a refund Square accepted as PENDING, then rejected.
+   * A refund CiviCRM recorded that Square then reports rejected.
+   *
+   * CiviCRM records only refunds Square has completed (see doRefund()), so
+   * this should not happen; if it does, it is reported for manual follow-up.
    *
    * @dataProvider refusedRefundStatusProvider
    */
@@ -116,15 +119,48 @@ class CRM_Core_Payment_Square_RefundTest extends CRM_Core_Payment_Square_SquareL
   }
 
   /**
-   * A refund of a payment no contribution here records is ignored.
+   * A refund of a payment no contribution here records is ignored, once it is old.
    */
   public function testRefundOfAnUnknownPaymentIsIgnored(): void {
-    $event = $this->refundEvent('refund.updated', 'COMPLETED', 1900);
-    $event['data']['object']['refund']['payment_id'] = 'SOMEONE-ELSES-PAYMENT';
+    $event = $this->refundEvent('refund.updated', 'COMPLETED', 1900, 'SOMEONE-ELSES-PAYMENT', gmdate('Y-m-d\TH:i:s\Z', time() - 7200));
 
     $this->deliver($event);
 
     $this->assertSame([], $this->refunds());
+  }
+
+  /**
+   * A recent refund of a payment not recorded yet is retried, not dropped.
+   */
+  public function testRefundOfAPaymentNotRecordedYetIsRetried(): void {
+    $event = $this->refundEvent('refund.updated', 'COMPLETED', 1900, self::SECOND['payment_id']);
+
+    $this->expectException(CRM_Core_Payment_SquareRetryableException::class);
+    $this->deliver($event);
+  }
+
+  /**
+   * Square does not deliver webhooks in order: the refund may come first.
+   */
+  public function testRefundDeliveredBeforeItsPaymentIsRecordedOnRetry(): void {
+    $refund = $this->refundEvent('refund.updated', 'COMPLETED', 1900, self::SECOND['payment_id']);
+    try {
+      $this->deliver($refund);
+      $this->fail('The refund should have been left for a retry.');
+    }
+    catch (CRM_Core_Payment_SquareRetryableException $e) {
+      // Left 'new' in the queue for the scheduled job.
+    }
+    $this->assertSame([], $this->refunds());
+
+    $this->squareBills(self::SECOND);
+    $this->deliver($this->invoicePaymentMadeEvent(self::SECOND));
+    // The scheduled job retries the refund.
+    $this->deliver($refund);
+
+    $refunds = $this->refunds();
+    $this->assertCount(1, $refunds);
+    $this->assertSame(self::REFUND_ID, reset($refunds)['trxn_id']);
   }
 
   /**
@@ -201,11 +237,15 @@ class CRM_Core_Payment_Square_RefundTest extends CRM_Core_Payment_Square_SquareL
    * @param string $type
    * @param string $status
    * @param int $amountCents
+   * @param string $paymentId
+   *   The refunded Square payment; the first installment's by default.
+   * @param string|null $createdAt
+   *   When Square created the refund; now by default.
    *
    * @return array
    */
-  private function refundEvent(string $type, string $status, int $amountCents): array {
-    $now = gmdate('Y-m-d\TH:i:s\Z');
+  private function refundEvent(string $type, string $status, int $amountCents, string $paymentId = self::FIRST['payment_id'], ?string $createdAt = NULL): array {
+    $now = $createdAt ?? gmdate('Y-m-d\TH:i:s\Z');
     return [
       'type' => $type,
       'event_id' => bin2hex(random_bytes(8)),
@@ -214,7 +254,7 @@ class CRM_Core_Payment_Square_RefundTest extends CRM_Core_Payment_Square_SquareL
         'object' => [
           'refund' => [
             'id' => self::REFUND_ID,
-            'payment_id' => self::FIRST['payment_id'],
+            'payment_id' => $paymentId,
             'status' => $status,
             'amount_money' => ['amount' => $amountCents, 'currency' => 'USD'],
             'created_at' => $now,

@@ -23,7 +23,7 @@ just enable the extension as usual (**Administer → System Settings → Extensi
 
 - One-time card payments via Square Payments API (`/v2/payments`)
 - Recurring contributions via Square Subscriptions API (`/v2/subscriptions`)
-- Refunds via Square Refunds API (`/v2/refunds`)
+- Refunds via Square Refunds API (`/v2/refunds`), recorded in CiviCRM once Square completes them
 - Subscription cancellation and amount changes synced to Square, and cancellations made in Square synced back to CiviCRM
 - Square Web Payments SDK for browser-side card tokenization — card details never pass through CiviCRM
 - Card form ZIP/postal code kept in step with the billing address's, so Square never sees two different ones
@@ -32,6 +32,7 @@ just enable the extension as usual (**Administer → System Settings → Extensi
 - Buyer verification (Strong Customer Authentication) during card tokenization
 - Webhook event handling with deduplication and delivery logging
 - Supports sandbox (test) and production environments
+- Currency-aware amounts: Square amounts are in each currency's smallest unit, so JPY (which has no cents) is never multiplied by 100
 
 ---
 
@@ -94,9 +95,9 @@ hours; any other failure is marked `error`. See
 | `subscription.updated` | Syncs subscription status/amount to `ContributionRecur`. Square has no `subscription.canceled` event: a cancellation arrives here with a `canceled_date` (the status stays `ACTIVE` until that date), and marks the `ContributionRecur` Cancelled |
 | `invoice.created` | Nothing is recorded: the invoice is still a draft Square has not charged |
 | `invoice.payment_made` | Records the installment: completes the checkout's Pending contribution for the first invoice, or creates and completes the next contribution of the series |
-| `invoice.scheduled_charge_failed` | Square could not charge the card on file: marks that installment's contribution Failed (the first installment's stays Pending, since Square keeps the invoice open) |
+| `invoice.scheduled_charge_failed` | Square could not charge the card on file: marks that installment's contribution Failed (the first installment's stays Pending, since Square keeps the invoice open). Ignored if Square reports the invoice paid by the time it is processed, since webhooks can arrive out of order |
 | `payment.updated` | Completes a one-time contribution; for a subscription payment, looks up its invoice at Square and records the installment exactly as `invoice.payment_made` does. A payment taken outside CiviCRM (Square Dashboard, Square Online, point of sale) is ignored unless **Import Square payments made outside CiviCRM** is enabled in Square Settings — and even then only at the processor's own Square location |
-| `refund.created`, `refund.updated` | Records a completed refund as a negative payment against the refunded payment |
+| `refund.created`, `refund.updated` | Records a completed refund as a negative payment against the refunded payment, including a refund made from CiviCRM that was still `PENDING` at Square. A refund that arrives before its payment is recorded is retried |
 
 Webhook deduplication uses the `civicrm_paymentprocessor_webhook` queue (provided by the mjwshared extension)
 and Square's globally unique event ID. Do not log webhook signatures, access
@@ -202,6 +203,7 @@ CRM/
     Subscriptions.php        Catalog plans/variations; subscription changes and cancellation
     Reconciler.php           Webhook-driven sync into CiviCRM's ledger
     Status.php               CiviCRM option values and Square status mappings
+    Currency.php             Amounts in Square's smallest currency units
     Form/Settings.php        Administer > System Settings > Square Settings (debug logging, external payment import)
     Upgrader.php             Creates/backfills/drops the square_customer_map table (see Database Tables)
 js/

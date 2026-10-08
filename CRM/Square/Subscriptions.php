@@ -198,7 +198,7 @@ class CRM_Square_Subscriptions {
       $currency
     );
     CRM_Core_Payment_SquareDebugLogger::log("Creating label Square plan variation: {$label}");
-    $amountCents = (int) round($amount * 100);
+    $amountMinorUnits = CRM_Square_Currency::toMinorUnits($amount, $currency);
 
     $phaseValues = [
       'ordinal' => 0,
@@ -206,7 +206,7 @@ class CRM_Square_Subscriptions {
       'cadence' => strtoupper($cadence),
       'pricing' => new SubscriptionPricing([
         'type' => 'STATIC',
-        'priceMoney' => new Money(['amount' => $amountCents, 'currency' => $currency]),
+        'priceMoney' => new Money(['amount' => $amountMinorUnits, 'currency' => $currency]),
       ]),
     ];
     // Only finite subscriptions get a periods count — sending periods: 0
@@ -357,7 +357,10 @@ class CRM_Square_Subscriptions {
     }
 
     $values = [
-      'priceOverrideMoney' => new Money(['amount' => (int) round($amount * 100), 'currency' => $currency]),
+      'priceOverrideMoney' => new Money([
+        'amount' => CRM_Square_Currency::toMinorUnits($amount, $currency),
+        'currency' => $currency,
+      ]),
     ];
     if ($subscription->getVersion() !== NULL) {
       $values['version'] = $subscription->getVersion();

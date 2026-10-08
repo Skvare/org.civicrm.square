@@ -58,6 +58,23 @@ class CRM_Core_Payment_Square_RequestShapeTest extends CRM_Core_Payment_Square_S
     $this->assertSame('pay_1', $result['trxn_id']);
   }
 
+  public function testOneTimePaymentInACurrencyWithoutCentsIsNotMultiplied(): void {
+    $captured = NULL;
+    $paymentsMock = $this->createMock(PaymentsClient::class);
+    $paymentsMock->method('create')->willReturnCallback(function (CreatePaymentRequest $request) use (&$captured) {
+      $captured = $request;
+      return new CreatePaymentResponse(['payment' => new Payment(['id' => 'pay_jpy', 'status' => 'COMPLETED'])]);
+    });
+
+    $processor = $this->processorWithMockClient(['payments' => $paymentsMock]);
+    $params = ['square_payment_token' => 'cnon:yen', 'amount' => '100', 'currency' => 'JPY', 'invoiceID' => 'inv-jpy'];
+    $processor->doPayment($params);
+
+    // Square amounts are in the currency's smallest unit: whole yen.
+    $this->assertSame(100, $captured->getAmountMoney()->getAmount());
+    $this->assertSame('JPY', $captured->getAmountMoney()->getCurrency());
+  }
+
   public function testOneTimePaymentOmitsReferenceIdWhenNoInvoiceId(): void {
     $captured = NULL;
     $paymentsMock = $this->createMock(PaymentsClient::class);
@@ -120,6 +137,15 @@ class CRM_Core_Payment_Square_RequestShapeTest extends CRM_Core_Payment_Square_S
     $this->assertLessThanOrEqual(45, strlen($captured[0]->getIdempotencyKey()));
   }
 
+  public function testRefundInACurrencyWithoutCentsIsNotMultiplied(): void {
+    $captured = [];
+    $params = ['trxn_id' => 'pay_yen', 'amount' => '100'];
+    $this->refundingProcessor($captured, ['JPY', 0])->doRefund($params);
+
+    $this->assertSame(100, $captured[0]->getAmountMoney()->getAmount());
+    $this->assertSame('JPY', $captured[0]->getAmountMoney()->getCurrency());
+  }
+
   public function testRefundOfAPaymentCiviCrmDoesNotKnowUsesTheGivenCurrency(): void {
     $captured = [];
     $params = ['trxn_id' => 'pay_99', 'amount' => '5.00', 'currencyID' => 'CAD'];
@@ -161,7 +187,7 @@ class CRM_Core_Payment_Square_RequestShapeTest extends CRM_Core_Payment_Square_S
       return new RefundPaymentResponse([
         'refund' => new PaymentRefund([
           'id' => 'refund_' . count($captured),
-          'status' => 'PENDING',
+          'status' => 'COMPLETED',
           'amountMoney' => $request->getAmountMoney(),
         ]),
       ]);

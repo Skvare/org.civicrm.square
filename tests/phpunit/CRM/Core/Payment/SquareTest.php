@@ -74,10 +74,10 @@ class CRM_Core_Payment_SquareTest extends TestCase {
   }
 
   /**
-   * @dataProvider acceptedRefundStatusProvider
+   * @dataProvider completedRefundStatusesProvider
    */
-  public function testRefundReturnsCiviRefundStatus(string $squareStatus): void {
-    $processor = $this->refundingProcessor($squareStatus);
+  public function testRefundReturnsCiviRefundStatus(array $squareStatuses): void {
+    $processor = $this->refundingProcessor(...$squareStatuses);
     $params = ['trxn_id' => 'payment-1', 'amount' => '12.34', 'currency' => 'USD'];
 
     $result = $processor->doRefund($params);
@@ -89,11 +89,45 @@ class CRM_Core_Payment_SquareTest extends TestCase {
     $this->assertSame('2026-09-30 12:00:00', date('Y-m-d H:i:s', strtotime($result['trxn_date'])));
   }
 
-  public static function acceptedRefundStatusProvider(): array {
+  public static function completedRefundStatusesProvider(): array {
     return [
-      'completed' => ['COMPLETED'],
-      'pending, as Square first reports a card refund' => ['PENDING'],
+      'completed' => [['COMPLETED']],
+      'pending, as Square first reports a card refund, then completed' => [['PENDING', 'PENDING', 'COMPLETED']],
     ];
+  }
+
+  public function testRefundStillPendingIsNotRecorded(): void {
+    $processor = $this->refundingProcessor('PENDING');
+    $params = ['trxn_id' => 'payment-1', 'amount' => '12.34'];
+
+    try {
+      $processor->doRefund($params);
+      $this->fail('A refund Square has not completed must not be reported Completed.');
+    }
+    catch (PaymentProcessorException $e) {
+      $this->assertStringContainsString('refund-1 but has not completed it yet', $e->getMessage());
+    }
+    // It was checked on, a few times, before giving up.
+    $this->assertSame(5, $processor->pauses);
+  }
+
+  public function testRefundThatFailsWhilePendingIsAPaymentFailure(): void {
+    $processor = $this->refundingProcessor('PENDING', 'FAILED');
+    $params = ['trxn_id' => 'payment-1', 'amount' => '12.34'];
+
+    $this->expectException(PaymentProcessorException::class);
+    $this->expectExceptionMessage('Status: FAILED');
+    $processor->doRefund($params);
+  }
+
+  public function testRefundWhoseStatusCannotBeCheckedIsReportedPending(): void {
+    $processor = $this->refundingProcessor('PENDING');
+    $processor->refundCheckFails = TRUE;
+    $params = ['trxn_id' => 'payment-1', 'amount' => '12.34'];
+
+    $this->expectException(PaymentProcessorException::class);
+    $this->expectExceptionMessage('has not completed it yet');
+    $processor->doRefund($params);
   }
 
   /**
@@ -138,20 +172,38 @@ class CRM_Core_Payment_SquareTest extends TestCase {
   }
 
   /**
-   * A processor whose Square refund comes back with the given status.
+   * A processor whose Square refund comes back with the given statuses.
+   *
+   * @param string ...$squareStatuses
+   *   As the refund is created, then as each later check finds it (the last
+   *   one repeating).
    */
-  private function refundingProcessor(string $squareStatus): CRM_Core_Payment_Square {
+  private function refundingProcessor(string ...$squareStatuses): CRM_Core_Payment_Square {
     $config = $this->processorConfig();
-    return new class('live', $config, $squareStatus) extends CRM_Core_Payment_Square {
+    return new class('live', $config, $squareStatuses) extends CRM_Core_Payment_Square {
 
       /**
-       * @var string
+       * @var string[]
        */
-      private string $squareStatus;
+      private array $squareStatuses;
 
-      public function __construct($mode, array &$paymentProcessor, string $squareStatus) {
+      /**
+       * Number of pauses between checks on the refund.
+       *
+       * @var int
+       */
+      public int $pauses = 0;
+
+      /**
+       * Whether checking on the refund fails.
+       *
+       * @var bool
+       */
+      public bool $refundCheckFails = FALSE;
+
+      public function __construct($mode, array &$paymentProcessor, array $squareStatuses) {
         parent::__construct($mode, $paymentProcessor);
-        $this->squareStatus = $squareStatus;
+        $this->squareStatuses = $squareStatuses;
       }
 
       protected function getRefundContext(string $paymentTrxnId): array {
@@ -159,14 +211,30 @@ class CRM_Core_Payment_SquareTest extends TestCase {
       }
 
       protected function createRefund(RefundPaymentRequest $request) {
-        return new RefundPaymentResponse([
-          'refund' => new PaymentRefund([
-            'id' => 'refund-1',
-            'locationId' => 'location-1',
-            'status' => $this->squareStatus,
-            'amountMoney' => new Money(['amount' => 1234, 'currency' => 'USD']),
-            'createdAt' => '2026-09-30T12:00:00Z',
-          ]),
+        return new RefundPaymentResponse(['refund' => $this->refund()]);
+      }
+
+      protected function getRefund(string $refundId): ?PaymentRefund {
+        if ($this->refundCheckFails) {
+          throw new CRM_Core_Payment_SquareRetryableException('Square API request failed: timed out');
+        }
+        if (count($this->squareStatuses) > 1) {
+          array_shift($this->squareStatuses);
+        }
+        return $this->refund();
+      }
+
+      protected function pause(int $microseconds): void {
+        $this->pauses++;
+      }
+
+      private function refund(): PaymentRefund {
+        return new PaymentRefund([
+          'id' => 'refund-1',
+          'locationId' => 'location-1',
+          'status' => $this->squareStatuses[0],
+          'amountMoney' => new Money(['amount' => 1234, 'currency' => 'USD']),
+          'createdAt' => '2026-09-30T12:00:00Z',
         ]);
       }
 
