@@ -60,6 +60,31 @@ class CRM_Square_Upgrader extends CRM_Extension_Upgrader_Base {
   }
 
   /**
+   * Let a Square payment processor be deleted.
+   *
+   * The foreign key from square_customer_map to civicrm_payment_processor
+   * was ON DELETE RESTRICT, so deleting a processor that had mapped any
+   * customer failed. A processor's mappings mean nothing without it, so they
+   * now go with it.
+   */
+  public function upgrade_1002(): bool {
+    _square_assert_php_version();
+    $this->cascadeProcessorDeletes();
+    return TRUE;
+  }
+
+  /**
+   * Re-create the payment processor foreign key with ON DELETE CASCADE.
+   */
+  protected function cascadeProcessorDeletes(): void {
+    CRM_Core_BAO_SchemaHandler::safeRemoveFK('square_customer_map', 'FK_square_customer_map_payment_processor_id');
+    CRM_Core_DAO::executeQuery(
+      'ALTER TABLE `square_customer_map` ADD CONSTRAINT `FK_square_customer_map_payment_processor_id`
+       FOREIGN KEY (`payment_processor_id`) REFERENCES `civicrm_payment_processor` (`id`) ON DELETE CASCADE ON UPDATE RESTRICT'
+    );
+  }
+
+  /**
    * Explain which customer mappings block upgrade_1001, and how to fix them.
    *
    * @param array $conflicts
@@ -160,7 +185,7 @@ class CRM_Square_Upgrader extends CRM_Extension_Upgrader_Base {
         CONSTRAINT `FK_square_customer_map_contact_id` FOREIGN KEY (`contact_id`)
           REFERENCES `civicrm_contact` (`id`) ON DELETE CASCADE ON UPDATE RESTRICT,
         CONSTRAINT `FK_square_customer_map_payment_processor_id` FOREIGN KEY (`payment_processor_id`)
-          REFERENCES `civicrm_payment_processor` (`id`) ON DELETE RESTRICT ON UPDATE RESTRICT
+          REFERENCES `civicrm_payment_processor` (`id`) ON DELETE CASCADE ON UPDATE RESTRICT
       ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
       SQL);
   }
@@ -172,15 +197,15 @@ class CRM_Square_Upgrader extends CRM_Extension_Upgrader_Base {
    * whose value can unambiguously be attributed to a single Square payment
    * processor.
    *
-   * The legacy custom field never recorded which processor (live vs.
-   * sandbox, or which of several Square merchant accounts) a value came
-   * from. If exactly one Square processor is configured on this site, every
-   * legacy value can only ever have belonged to it — no inference is
-   * needed because there is nothing else it could be. If two or more
-   * Square processors are configured, a legacy value's owning processor is
-   * genuinely unknown; we do not guess (in particular, we never assume
-   * "live"). Those contacts are logged for manual reconciliation and their
-   * legacy custom-field data is left in place untouched.
+   * The legacy custom field never recorded which processor (or which of
+   * several Square merchant accounts) a value came from. Values are
+   * attributed to the live processor when exactly one live Square
+   * processor is configured: sandbox processors are not considered, since
+   * every configured processor has one. If two or more live Square
+   * processors are configured, a legacy value's owning processor is
+   * genuinely unknown and is not guessed. Those contacts are logged for
+   * manual reconciliation and their legacy custom-field data is left in
+   * place untouched.
    *
    * The square_data custom field group is only removed once every legacy
    * value has been migrated — i.e. once there is no ambiguous data left
@@ -202,9 +227,13 @@ class CRM_Square_Upgrader extends CRM_Extension_Upgrader_Base {
     $table = $field['custom_group_id.table_name'];
     $column = $field['column_name'];
 
+    // Live processors only (API4's default, made explicit): each configured
+    // processor also has a sandbox row, which would otherwise make every
+    // site look ambiguous.
     $squareProcessorIds = [];
     foreach (PaymentProcessor::get(FALSE)
       ->addWhere('payment_processor_type_id:name', '=', 'Square')
+      ->addWhere('is_test', '=', FALSE)
       ->addSelect('id')
       ->execute() as $processor) {
       $squareProcessorIds[] = (int) $processor['id'];

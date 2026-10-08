@@ -126,16 +126,75 @@ class CRM_Core_Payment_Square_ExceptionHandlingTest extends CRM_Core_Payment_Squ
     ];
   }
 
-  public function testTransportFailureKeepsItsRetryableException(): void {
+  public function testUnconfirmedChargeKeepsTheContributionPageContributionPending(): void {
     $paymentsMock = $this->createMock(PaymentsClient::class);
     $paymentsMock->method('create')->willThrowException(new SquareException('connection timed out'));
 
     $processor = $this->processorWithMockClient(['payments' => $paymentsMock]);
-
-    $this->expectException(CRM_Core_Payment_SquareRetryableException::class);
-    $this->expectExceptionMessage('Square API request failed: connection timed out');
     $params = ['token' => 'cnon:timeout', 'amount' => '10.00', 'invoiceID' => 'inv-timeout'];
-    $processor->doPayment($params);
+
+    try {
+      $processor->doPayment($params);
+      $this->fail('An unconfirmed charge must throw.');
+    }
+    catch (PaymentProcessorException $e) {
+      $this->fail('Square may have charged the card: CiviCRM must not mark the contribution Failed.');
+    }
+    catch (CRM_Core_Payment_SquareOutcomeUnknownException $e) {
+      $this->assertStringContainsString('could not confirm', $e->getMessage());
+      $this->assertInstanceOf(CRM_Core_Payment_SquareRetryableException::class, $e->getPrevious());
+    }
+    $this->assertLogged('error', 'could not confirm the outcome of payment inv-timeout');
+  }
+
+  public function testUnconfirmedChargeAtEventRegistrationIsAPaymentFailure(): void {
+    $paymentsMock = $this->createMock(PaymentsClient::class);
+    $paymentsMock->method('create')->willThrowException($this->apiException(503, [
+      ['category' => 'API_ERROR', 'code' => 'SERVICE_UNAVAILABLE', 'detail' => 'Try again.'],
+    ]));
+
+    $processor = $this->processorWithMockClient(['payments' => $paymentsMock]);
+    $params = ['token' => 'cnon:503', 'amount' => '10.00', 'invoiceID' => 'inv-event'];
+
+    // Event registration only handles PaymentProcessorException; anything
+    // else is a fatal error page for the registrant.
+    $this->expectException(PaymentProcessorException::class);
+    $this->expectExceptionMessage('could not confirm');
+    $processor->doPayment($params, 'event');
+  }
+
+  public function testRejectedRequestIsAPaymentFailure(): void {
+    $paymentsMock = $this->createMock(PaymentsClient::class);
+    $paymentsMock->method('create')->willThrowException($this->apiException(400, [
+      ['category' => 'INVALID_REQUEST_ERROR', 'code' => 'CARD_TOKEN_USED', 'detail' => 'Card nonce already used.'],
+    ]));
+
+    $processor = $this->processorWithMockClient(['payments' => $paymentsMock]);
+    $params = ['token' => 'cnon:used', 'amount' => '10.00', 'invoiceID' => 'inv-used'];
+
+    // Square refused the request, so nothing was charged: CiviCRM's checkout
+    // may clean up as for a decline.
+    try {
+      $processor->doPayment($params);
+      $this->fail('A rejected request must throw.');
+    }
+    catch (PaymentProcessorException $e) {
+      $this->assertStringNotContainsString('CARD_TOKEN_USED', $e->getMessage());
+      $this->assertStringContainsString('CARD_TOKEN_USED', $e->getPrevious()->getMessage());
+    }
+  }
+
+  /**
+   * Assert a message containing $needle was logged at $level.
+   */
+  private function assertLogged(string $level, string $needle): void {
+    foreach (Civi::$logged as [$loggedLevel, $message]) {
+      if ($loggedLevel === $level && str_contains($message, $needle)) {
+        $this->addToAssertionCount(1);
+        return;
+      }
+    }
+    $this->fail("Nothing containing '{$needle}' was logged at level {$level}.");
   }
 
   /**

@@ -58,8 +58,10 @@ function square_civicrm_install(): void {
 /**
  * Implements hook_civicrm_uninstall().
  *
- * Removes the square_data custom group (and its fields) created on
- * install so uninstalling the extension doesn't leave orphaned schema.
+ * Removes the legacy square_data custom group (and its fields), if an
+ * earlier version left one behind, so uninstalling the extension doesn't
+ * leave orphaned schema. square_customer_map is dropped by
+ * CRM_Square_Upgrader::uninstall().
  */
 function square_civicrm_uninstall(): void {
   try {
@@ -91,14 +93,23 @@ function square_civicrm_enable(): void {
 }
 
 /**
- * Implements hook_civicrm_managed().
+ * Implements hook_civicrm_merge().
  *
- * Wires up the managed entities declared under managed/ (currently just
- * the Square payment processor type, see
- * managed/PaymentProcessorType.mgd.php).
+ * Moves the merged-away contact's Square customer mappings to the contact
+ * kept. Where both contacts have a customer for the same payment processor,
+ * the kept contact's mapping wins (UPDATE IGNORE skips the row the unique
+ * contact/processor key would reject) and the other is dropped. Registering
+ * the table in 'cidRefs' instead would make core run a plain UPDATE, which
+ * that key would make fail.
  */
-function square_civicrm_managed(&$entities): void {
-  _square_civix_civicrm_managed($entities);
+function square_civicrm_merge($type, &$data, $mainId = NULL, $otherId = NULL, $tables = NULL): void {
+  if ($type !== 'sqls' || empty($mainId) || empty($otherId)) {
+    return;
+  }
+  $mainId = (int) $mainId;
+  $otherId = (int) $otherId;
+  $data[] = "UPDATE IGNORE square_customer_map SET contact_id = {$mainId} WHERE contact_id = {$otherId}";
+  $data[] = "DELETE FROM square_customer_map WHERE contact_id = {$otherId}";
 }
 
 /**

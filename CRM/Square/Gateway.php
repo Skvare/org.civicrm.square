@@ -152,11 +152,12 @@ class CRM_Square_Gateway {
       throw $this->apiError($e);
     }
     catch (SquareException $e) {
-      // Transport-level failure (timeout, DNS, connection reset, etc.) —
-      // there's no reason to believe retrying would fail again the same
-      // way, so callers processing a queued webhook should retry rather
-      // than give up permanently.
-      throw new CRM_Core_Payment_SquareRetryableException('Square API request failed: ' . $e->getMessage());
+      // Transport-level failure (timeout, DNS, connection reset, etc.), or
+      // a successful response the SDK could not read — so the request may
+      // well have succeeded. A queued webhook is retried; a checkout must
+      // treat its charge as unconfirmed, not failed (see
+      // CRM_Core_Payment_Square::paymentOutcomeUnknown()).
+      throw new CRM_Core_Payment_SquareRetryableException('Square API request failed: ' . $e->getMessage(), 0, [], $e);
     }
   }
 

@@ -79,18 +79,12 @@ if (!class_exists('CRM_Extension_Upgrader_Base')) {
   abstract class CRM_Extension_Upgrader_Base {
   }
 }
-if (!function_exists('_square_assert_php_version')) {
-
-  /**
-   * Stand-in for square.php's PHP version check, which the upgrader calls.
-   */
-  function _square_assert_php_version(): void {
-  }
-
-}
 if (!class_exists('Civi\\Payment\\Exception\\PaymentProcessorException')) {
   require_once __DIR__ . '/stubs/PaymentProcessorException.php';
 }
+// The extension's hook implementations (and, through square.civix.php,
+// CRM_Square_ExtensionUtil), as CiviCRM loads them.
+require_once $extensionRoot . '/square.php';
 if (!class_exists('CRM_Square_ExtensionUtil')) {
 
   /**
@@ -137,50 +131,25 @@ if (!function_exists('ts')) {
    * @return string
    */
   function ts($message, array $params = []) {
+    // Options such as 'domain' are not placeholders.
+    unset($params['domain'], $params['escape'], $params['plural'], $params['count']);
     foreach ($params as $key => $value) {
-      $message = str_replace("%{$key}", $value, $message);
+      $message = str_replace("%{$key}", (string) $value, $message);
     }
     return $message;
   }
 
-}
-if (!class_exists('CRM_Contribute_PseudoConstant')) {
-
-  /**
-   * Minimal stand-in for CiviCRM core's contribution-status lookup.
-   *
-   * Used by CRM_Core_Payment_Square::contributionStatusId(). Values match
-   * CiviCRM's own default 'contribution_status' option group so tests
-   * exercise the same IDs the production code assumes elsewhere.
-   */
-  class CRM_Contribute_PseudoConstant {
-
-    /**
-     * @return array
-     */
-    public static function contributionStatus(): array {
-      return [
-        1 => 'Completed',
-        2 => 'Pending',
-        3 => 'Cancelled',
-        4 => 'Failed',
-        5 => 'In Progress',
-        6 => 'Overdue',
-        7 => 'Refunded',
-      ];
-    }
-
-  }
 }
 if (!class_exists('CRM_Core_PseudoConstant')) {
 
   /**
    * Minimal stand-in for CiviCRM core's pseudoconstant lookup.
    *
-   * Used by CRM_Core_Payment_Square::pseudoConstantId() for
-   * contribution_status_id, payment_instrument_id, and financial_type_id.
-   * Values match CiviCRM's own default option groups, seeded on every
-   * fresh install.
+   * Used by CRM_Square_Status::pseudoConstantId() for contribution and
+   * recurring contribution statuses, payment instruments, and financial
+   * types. Values match the option groups CiviCRM 6.16 seeds on a fresh
+   * install — including that contribution_status has no In Progress (5) or
+   * Overdue (6), which only contribution_recur_status has.
    */
   class CRM_Core_PseudoConstant {
 
@@ -193,30 +162,175 @@ if (!class_exists('CRM_Core_PseudoConstant')) {
      */
     public static function getKey($baoName, $fieldName, $value) {
       $options = [
-        'contribution_status_id' => [
-          1 => 'Completed',
-          2 => 'Pending',
-          3 => 'Cancelled',
-          4 => 'Failed',
-          5 => 'In Progress',
-          6 => 'Overdue',
-          7 => 'Refunded',
+        'CRM_Contribute_BAO_Contribution' => [
+          'contribution_status_id' => [
+            1 => 'Completed',
+            2 => 'Pending',
+            3 => 'Cancelled',
+            4 => 'Failed',
+            7 => 'Refunded',
+            8 => 'Partially paid',
+            9 => 'Pending refund',
+            10 => 'Chargeback',
+            11 => 'Template',
+          ],
+          'payment_instrument_id' => [
+            1 => 'Credit Card',
+            2 => 'Debit Card',
+            3 => 'Cash',
+            4 => 'Check',
+            5 => 'EFT',
+          ],
+          'financial_type_id' => [
+            1 => 'Donation',
+            2 => 'Member Dues',
+            3 => 'Campaign Contribution',
+            4 => 'Event Fee',
+          ],
         ],
-        'payment_instrument_id' => [
-          1 => 'Credit Card',
-          2 => 'Debit Card',
-          3 => 'Cash',
-          4 => 'Check',
-          5 => 'EFT',
-        ],
-        'financial_type_id' => [
-          1 => 'Donation',
-          2 => 'Member Dues',
-          3 => 'Campaign Contribution',
-          4 => 'Event Fee',
+        'CRM_Contribute_BAO_ContributionRecur' => [
+          'contribution_status_id' => [
+            1 => 'Completed',
+            2 => 'Pending',
+            3 => 'Cancelled',
+            4 => 'Failed',
+            5 => 'In Progress',
+            6 => 'Overdue',
+            7 => 'Processing',
+            8 => 'Failing',
+          ],
         ],
       ];
-      return array_search($value, $options[$fieldName] ?? [], TRUE);
+      return array_search($value, $options[$baoName][$fieldName] ?? [], TRUE);
+    }
+
+    /**
+     * @param int|false $id
+     *
+     * @return array|string|null
+     */
+    public static function countryIsoCode($id = FALSE) {
+      $codes = [1228 => 'US', 1039 => 'CA'];
+      return $id ? ($codes[$id] ?? NULL) : $codes;
+    }
+
+    /**
+     * @param int|false $id
+     *
+     * @return array|string|null
+     */
+    public static function stateProvinceAbbreviation($id = FALSE) {
+      $abbreviations = [1042 => 'TN'];
+      return $id ? ($abbreviations[$id] ?? NULL) : $abbreviations;
+    }
+
+  }
+}
+if (!class_exists('CRM_Core_Region')) {
+
+  /**
+   * Minimal stand-in for CiviCRM core's page regions.
+   *
+   * Snippets added are kept in CRM_Core_Region::$added, by region name.
+   */
+  class CRM_Core_Region {
+
+    /**
+     * Snippets added to each region.
+     *
+     * @var array
+     */
+    public static array $added = [];
+
+    /**
+     * @var string
+     */
+    private string $name;
+
+    /**
+     * @param string $name
+     */
+    private function __construct(string $name) {
+      $this->name = $name;
+    }
+
+    /**
+     * @param string $name
+     *
+     * @return self
+     */
+    public static function instance($name): self {
+      return new self($name);
+    }
+
+    /**
+     * @param array $snippet
+     */
+    public function add(array $snippet): void {
+      self::$added[$this->name][] = $snippet;
+    }
+
+  }
+}
+if (!class_exists('CRM_Core_Resources')) {
+
+  /**
+   * Minimal stand-in for CiviCRM core's resource manager.
+   *
+   * Settings added are kept in CRM_Core_Resources::$settings.
+   */
+  class CRM_Core_Resources {
+
+    /**
+     * Settings added, merged.
+     *
+     * @var array
+     */
+    public static array $settings = [];
+
+    /**
+     * @return self
+     */
+    public static function singleton(): self {
+      return new self();
+    }
+
+    /**
+     * @param string $key
+     * @param string|null $file
+     *
+     * @return string
+     */
+    public function getUrl($key, $file = NULL): string {
+      return "https://example.invalid/ext/{$key}/" . ($file ?? '');
+    }
+
+    /**
+     * @param array $settings
+     */
+    public function addSetting(array $settings): self {
+      self::$settings = array_replace_recursive(self::$settings, $settings);
+      return $this;
+    }
+
+  }
+}
+if (!class_exists('CRM_Utils_Rule')) {
+
+  /**
+   * Minimal stand-in for CiviCRM core's validation and cleaning rules.
+   */
+  class CRM_Utils_Rule {
+
+    /**
+     * As core's, for the default separators: drop spaces and thousands commas.
+     *
+     * @param string|null $value
+     *
+     * @return string
+     */
+    public static function cleanMoney($value): string {
+      return str_replace([' ', "\t", "\n", ','], '', (string) ($value ?? ''));
     }
 
   }
@@ -226,7 +340,7 @@ if (!class_exists('Civi')) {
   /**
    * Minimal stand-in for CiviCRM's Civi service locator.
    *
-   * Only settings() and log() are provided. Log calls are recorded in
+   * Settings, logging and an injectable lock manager are provided. Logs go to
    * Civi::$logged so tests can assert reconciliation errors were raised.
    */
   class Civi {
@@ -244,6 +358,23 @@ if (!class_exists('Civi')) {
      * @var array
      */
     public static array $settings = [];
+
+    /**
+     * Lock manager supplied by tests exercising contribution locks.
+     *
+     * @var object|null
+     */
+    public static ?object $lockManager = NULL;
+
+    /**
+     * @return object
+     */
+    public static function lockManager() {
+      if (self::$lockManager === NULL) {
+        throw new LogicException('No test lock manager configured.');
+      }
+      return self::$lockManager;
+    }
 
     /**
      * @return object

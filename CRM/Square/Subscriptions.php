@@ -42,7 +42,10 @@ class CRM_Square_Subscriptions {
   }
 
   /**
-   * Square-supported cadence definitions.
+   * Square-supported cadence definitions (Square's SubscriptionCadence).
+   *
+   * A CiviCRM frequency with no equivalent here (e.g. every 3 weeks) cannot
+   * be billed by Square, and is refused at checkout.
    */
   protected const SQUARE_CADENCES = [
     'DAILY' => [
@@ -60,6 +63,21 @@ class CRM_Square_Subscriptions {
       'unit' => 'week',
       'step' => 2,
     ],
+    'THIRTY_DAYS' => [
+      'label' => 'Every 30 Days',
+      'unit' => 'day',
+      'step' => 30,
+    ],
+    'SIXTY_DAYS' => [
+      'label' => 'Every 60 Days',
+      'unit' => 'day',
+      'step' => 60,
+    ],
+    'NINETY_DAYS' => [
+      'label' => 'Every 90 Days',
+      'unit' => 'day',
+      'step' => 90,
+    ],
     'MONTHLY' => [
       'label' => 'Monthly',
       'unit' => 'month',
@@ -75,6 +93,11 @@ class CRM_Square_Subscriptions {
       'unit' => 'month',
       'step' => 3,
     ],
+    'EVERY_FOUR_MONTHS' => [
+      'label' => 'Every 4 Months',
+      'unit' => 'month',
+      'step' => 4,
+    ],
     'EVERY_SIX_MONTHS' => [
       'label' => 'Every 6 Months',
       'unit' => 'month',
@@ -84,6 +107,11 @@ class CRM_Square_Subscriptions {
       'label' => 'Annual',
       'unit' => 'year',
       'step' => 1,
+    ],
+    'EVERY_TWO_YEARS' => [
+      'label' => 'Every 2 Years',
+      'unit' => 'year',
+      'step' => 2,
     ],
   ];
 
@@ -170,7 +198,7 @@ class CRM_Square_Subscriptions {
       $currency
     );
     CRM_Core_Payment_SquareDebugLogger::log("Creating label Square plan variation: {$label}");
-    $amountCents = (int) round($amount * 100);
+    $amountMinorUnits = CRM_Square_Currency::toMinorUnits($amount, $currency);
 
     $phaseValues = [
       'ordinal' => 0,
@@ -178,7 +206,7 @@ class CRM_Square_Subscriptions {
       'cadence' => strtoupper($cadence),
       'pricing' => new SubscriptionPricing([
         'type' => 'STATIC',
-        'priceMoney' => new Money(['amount' => $amountCents, 'currency' => $currency]),
+        'priceMoney' => new Money(['amount' => $amountMinorUnits, 'currency' => $currency]),
       ]),
     ];
     // Only finite subscriptions get a periods count — sending periods: 0
@@ -329,7 +357,10 @@ class CRM_Square_Subscriptions {
     }
 
     $values = [
-      'priceOverrideMoney' => new Money(['amount' => (int) round($amount * 100), 'currency' => $currency]),
+      'priceOverrideMoney' => new Money([
+        'amount' => CRM_Square_Currency::toMinorUnits($amount, $currency),
+        'currency' => $currency,
+      ]),
     ];
     if ($subscription->getVersion() !== NULL) {
       $values['version'] = $subscription->getVersion();

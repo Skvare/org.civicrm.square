@@ -3,14 +3,16 @@
 use Civi\Api4\Contact;
 use Civi\Api4\Contribution;
 use Civi\Api4\ContributionRecur;
+use Civi\Api4\FinancialTrxn;
 use Civi\Api4\Payment;
 use Square\SquareClient;
 use Square\Types\InvoiceFilter;
 use Square\Types\InvoiceQuery;
 use Square\Types\InvoiceSort;
-use Square\Customers\Requests\GetCustomersRequest;
 use Square\Subscriptions\Requests\GetSubscriptionsRequest;
+use Square\Invoices\Requests\GetInvoicesRequest;
 use Square\Invoices\Requests\SearchInvoicesRequest;
+use Square\Types\Subscription;
 use Square\Orders\Requests\GetOrdersRequest;
 
 /**
@@ -57,6 +59,17 @@ class CRM_Square_Reconciler {
    * handled on its own merits.
    */
   protected const WEBHOOK_GRACE_SECONDS = 1800;
+
+  /**
+   * Square invoice statuses that mean the invoice has been (or is being) paid.
+   */
+  protected const PAID_INVOICE_STATUSES = [
+    'PAID',
+    'PARTIALLY_PAID',
+    'PAYMENT_PENDING',
+    'REFUNDED',
+    'PARTIALLY_REFUNDED',
+  ];
 
   /**
    * Sync a Square payment (from a payment.updated webhook) into CiviCRM.
@@ -112,7 +125,7 @@ class CRM_Square_Reconciler {
 
       $invoice = $this->findInvoiceForPayment($payment);
       if (!empty($invoice['subscription_id'])) {
-        $recur = $this->findRecurBySubscriptionId($invoice['subscription_id']);
+        $recur = $this->findOrLinkRecur($invoice['subscription_id']);
         if (!$recur) {
           $this->handleUnknownSubscription($invoice['subscription_id'], $payment['created_at'] ?? NULL, "payment {$paymentId}");
           return;
@@ -137,7 +150,10 @@ class CRM_Square_Reconciler {
    *
    * Square reports the fee in a later payment.updated than the one that
    * first reports the payment COMPLETED. Setting the contribution's
-   * fee_amount makes CiviCRM record the fee transaction.
+   * fee_amount makes CiviCRM record the fee transaction. The payment's own
+   * fee_amount is set first: every later Payment.create that carries a
+   * fee_amount (mjwshared's refund form sends 0) recalculates the
+   * contribution's fee as the total of its payments' fees.
    *
    * @param array $recorded
    *   As returned by findRecordedPayment().
@@ -155,6 +171,7 @@ class CRM_Square_Reconciler {
     if ($this->getContributionFeeAmount($contributionId) > 0) {
       return;
     }
+    $this->updatePaymentFee((int) $recorded['id'], $fee, (float) $recorded['total_amount']);
     $this->updateContribution($contributionId, ['fee_amount' => $fee]);
     CRM_Core_Payment_SquareDebugLogger::log("Square syncPaymentFromSquare(): recorded processing fee {$fee} on contribution {$contributionId} for payment {$payment['id']}.");
   }
@@ -238,6 +255,11 @@ class CRM_Square_Reconciler {
   /**
    * Import a completed Square payment taken outside CiviCRM as a new contribution.
    *
+   * Only when the square_import_external_payments setting is on, and only
+   * for payments at this processor's location: Square sends webhooks for
+   * every payment the merchant takes — point of sale, Square Online, other
+   * locations — and none of those is CiviCRM's to record by default.
+   *
    * @param array $payment
    *   Payment object from Square webhooks.
    *
@@ -247,6 +269,16 @@ class CRM_Square_Reconciler {
     $paymentId = (string) $payment['id'];
     $orderID = $payment['order_id'] ?? NULL;
     $referenceId = $payment['reference_id'] ?? NULL;
+
+    if (!$this->isImportingExternalPayments()) {
+      CRM_Core_Payment_SquareDebugLogger::log("Square syncPaymentFromSquare(): payment {$paymentId} matches nothing in CiviCRM; importing Square payments made outside CiviCRM is disabled, so it is ignored.");
+      return;
+    }
+    $locationId = $payment['location_id'] ?? NULL;
+    if ($locationId !== $this->gateway->getLocationId()) {
+      CRM_Core_Payment_SquareDebugLogger::log("Square syncPaymentFromSquare(): payment {$paymentId} was taken at location " . ($locationId ?? 'unknown') . ", not this processor's; ignored.");
+      return;
+    }
     CRM_Core_Payment_SquareDebugLogger::log("Square syncPaymentFromSquare(): no existing contribution found for payment {$paymentId} (order_id={$orderID}), attempting to create a new one.");
 
     // Payments made by versions of doRecurPayment() before the subscription
@@ -280,7 +312,7 @@ class CRM_Square_Reconciler {
     // Donation financial type resolved by name, never a hard-coded ID.
     $financialTypeId = $refRecurContribution['financial_type_id'] ?? CRM_Square_Status::financialTypeId('Donation');
     $money = $payment['amount_money'] ?? [];
-    $amount = isset($money['amount']) ? ((float) $money['amount']) / 100 : 0.0;
+    $amount = isset($money['amount']) ? CRM_Square_Currency::fromMinorUnits($money['amount'], $money['currency'] ?? NULL) : 0.0;
 
     // Create the contribution Pending, then complete it via Payment.create so
     // the CiviCRM financial ledger (FinancialTrxn / EntityFinancialTrxn) is
@@ -381,7 +413,7 @@ class CRM_Square_Reconciler {
     return [
       'payment_id' => (string) $payment['id'],
       'invoice_id' => $invoice['id'] ?? NULL,
-      'amount' => isset($money['amount']) ? ((float) $money['amount']) / 100 : NULL,
+      'amount' => isset($money['amount']) ? CRM_Square_Currency::fromMinorUnits($money['amount'], $money['currency'] ?? NULL) : NULL,
       'currency' => $money['currency'] ?? NULL,
       'fee_amount' => $this->sumProcessingFees($payment['processing_fee'] ?? []),
       'trxn_date' => $this->squareTimestampToCivi($payment['created_at'] ?? NULL),
@@ -430,9 +462,9 @@ class CRM_Square_Reconciler {
     return [
       'payment_id' => (string) $tender['payment_id'],
       'invoice_id' => $invoiceId,
-      'amount' => isset($money['amount']) ? ((float) $money['amount']) / 100 : NULL,
+      'amount' => isset($money['amount']) ? CRM_Square_Currency::fromMinorUnits($money['amount'], $money['currency'] ?? NULL) : NULL,
       'currency' => $money['currency'] ?? NULL,
-      'fee_amount' => isset($tender['processing_fee_money']['amount']) ? ((float) $tender['processing_fee_money']['amount']) / 100 : NULL,
+      'fee_amount' => isset($tender['processing_fee_money']['amount']) ? CRM_Square_Currency::fromMinorUnits($tender['processing_fee_money']['amount'], $tender['processing_fee_money']['currency'] ?? $money['currency'] ?? NULL) : NULL,
       'trxn_date' => $this->squareTimestampToCivi($tender['created_at'] ?? $invoice['updated_at'] ?? NULL),
       'payment_instrument_id' => CRM_Square_Status::mapPaymentInstrument($tender['type'] ?? NULL),
     ];
@@ -594,8 +626,8 @@ class CRM_Square_Reconciler {
         return $contribution;
       }
     }
-    // Already created for this Square invoice (e.g. by invoice.payment_failed
-    // for an earlier attempt).
+    // Already created for this Square invoice (e.g. by
+    // invoice.scheduled_charge_failed for an earlier attempt).
     if (!empty($installment['invoice_id'])) {
       foreach ($contributions as $contribution) {
         if (($contribution['invoice_id'] ?? NULL) === $installment['invoice_id']) {
@@ -660,8 +692,8 @@ class CRM_Square_Reconciler {
    * @throws \CRM_Core_Exception
    */
   protected function assertAmountMatches(float $expectedAmount, string $expectedCurrency, array $installment, string $expectedBy): void {
-    $actualCents = $installment['amount'] === NULL ? NULL : (int) round($installment['amount'] * 100);
-    if ($actualCents === (int) round($expectedAmount * 100) && strcasecmp($expectedCurrency, (string) $installment['currency']) === 0) {
+    $actual = $installment['amount'] === NULL ? NULL : CRM_Square_Currency::toMinorUnits($installment['amount'], $expectedCurrency);
+    if ($actual === CRM_Square_Currency::toMinorUnits($expectedAmount, $expectedCurrency) && strcasecmp($expectedCurrency, (string) $installment['currency']) === 0) {
       return;
     }
     $message = sprintf(
@@ -736,13 +768,15 @@ class CRM_Square_Reconciler {
    *   NULL when Square has not reported any fee yet.
    */
   protected function sumProcessingFees(array $processingFees): ?float {
-    $cents = NULL;
+    $minorUnits = NULL;
+    $currency = NULL;
     foreach ($processingFees as $fee) {
       if (isset($fee['amount_money']['amount'])) {
-        $cents = ($cents ?? 0) + (int) $fee['amount_money']['amount'];
+        $minorUnits = ($minorUnits ?? 0) + (int) $fee['amount_money']['amount'];
+        $currency = $currency ?? ($fee['amount_money']['currency'] ?? NULL);
       }
     }
-    return $cents === NULL ? NULL : $cents / 100;
+    return $minorUnits === NULL ? NULL : CRM_Square_Currency::fromMinorUnits($minorUnits, $currency);
   }
 
   /**
@@ -787,6 +821,108 @@ class CRM_Square_Reconciler {
       ->addWhere('is_test', '=', $this->gateway->isTestMode())
       ->execute()
       ->first();
+  }
+
+  /**
+   * The recurring contribution a Square subscription belongs to, linking it if checkout could not.
+   *
+   * Checkout (doRecurPayment()) saves the subscription ID on the recurring
+   * contribution once Square confirms the subscription. If Square created it
+   * but that confirmation was lost (e.g. a timeout: see
+   * CRM_Core_Payment_SquareOutcomeUnknownException), Square still bills it,
+   * and the subscription still names its recurring contribution and contact
+   * in its source (see doRecurPayment()). That is trusted only for a
+   * recurring contribution of this processor not linked to any subscription
+   * yet, whose contact this processor mapped the subscription's Square
+   * customer to, at this processor's location.
+   *
+   * @param string $subscriptionId
+   * @param \Square\Types\Subscription|null $subscription
+   *   The subscription, if already fetched from Square.
+   *
+   * @return array|null
+   *   As findRecurBySubscriptionId() returns it.
+   *
+   * @throws \CRM_Core_Exception
+   */
+  protected function findOrLinkRecur(string $subscriptionId, ?Subscription $subscription = NULL): ?array {
+    $recur = $this->findRecurBySubscriptionId($subscriptionId);
+    if ($recur) {
+      return $recur;
+    }
+
+    $subscription = $subscription ?? $this->getSquareSubscription($subscriptionId);
+    $source = $subscription ? json_decode((string) $subscription->getSource()?->getName(), TRUE) : NULL;
+    $recurId = is_array($source) && ctype_digit((string) ($source['recur_id'] ?? '')) ? (int) $source['recur_id'] : 0;
+    $contactId = is_array($source) && ctype_digit((string) ($source['contact_id'] ?? '')) ? (int) $source['contact_id'] : 0;
+    if (!$recurId || !$contactId) {
+      // Not created by this extension (e.g. in the Square Dashboard).
+      return NULL;
+    }
+
+    $recur = $this->findRecurById($recurId);
+    if (!$recur
+      || !empty($recur['processor_id'])
+      || (int) $recur['contact_id'] !== $contactId
+      || $subscription->getLocationId() !== $this->gateway->getLocationId()
+      || $this->findContactIdBySquareCustomer((string) $subscription->getCustomerId()) !== $contactId) {
+      Civi::log('square')->warning("Square subscription {$subscriptionId} names recurring contribution {$recurId} of contact {$contactId}, which could not be confirmed as its own on payment processor {$this->gateway->processorId()}; not linked.");
+      return NULL;
+    }
+
+    $this->updateRecur($recurId, ['processor_id' => $subscriptionId, 'trxn_id' => $subscriptionId]);
+    Civi::log('square')->warning("Square: linked subscription {$subscriptionId} to recurring contribution {$recurId}, which checkout had not linked (its outcome was not confirmed).");
+    return ['processor_id' => $subscriptionId] + $recur;
+  }
+
+  /**
+   * A recurring contribution of this processor, in its environment, by ID.
+   *
+   * @param int $recurId
+   *
+   * @return array|null
+   *   As findRecurBySubscriptionId() returns it.
+   */
+  protected function findRecurById(int $recurId): ?array {
+    return ContributionRecur::get(FALSE)
+      ->addSelect('id', 'contact_id', 'amount', 'currency', 'processor_id', 'contribution_status_id', 'is_email_receipt', 'is_test')
+      ->addWhere('id', '=', $recurId)
+      ->addWhere('payment_processor_id', '=', $this->gateway->processorId())
+      ->addWhere('is_test', '=', $this->gateway->isTestMode())
+      ->execute()
+      ->first();
+  }
+
+  /**
+   * A subscription as Square currently reports it.
+   *
+   * @param string $subscriptionId
+   *
+   * @return \Square\Types\Subscription|null
+   *
+   * @throws \CRM_Core_Exception
+   */
+  protected function getSquareSubscription(string $subscriptionId): ?Subscription {
+    return $this->gateway->call(fn (SquareClient $client) => $client->subscriptions->get(
+      new GetSubscriptionsRequest(['subscriptionId' => $subscriptionId])
+    ))->getSubscription();
+  }
+
+  /**
+   * An invoice's status as Square currently reports it.
+   *
+   * @param string $invoiceId
+   *
+   * @return string|null
+   *   NULL if Square has no such invoice.
+   *
+   * @throws \CRM_Core_Exception
+   */
+  protected function getSquareInvoiceStatus(string $invoiceId): ?string {
+    $invoice = $this->gateway->call(fn (SquareClient $client) => $client->invoices->get(
+      new GetInvoicesRequest(['invoiceId' => $invoiceId])
+    ))->getInvoice();
+    return $invoice ? strtoupper((string) $invoice->getStatus()) : NULL;
   }
 
   /**
@@ -859,16 +995,44 @@ class CRM_Square_Reconciler {
   }
 
   /**
-   * Find a contribution in this processor's environment by its trxn_id.
+   * Find a refund recorded in CiviCRM by its Square refund ID.
+   *
+   * By any processor: a refund recorded from CiviCRM's refund form may
+   * carry none.
+   *
+   * @param string $refundId
+   *
+   * @return array|null
+   *   With 'id' (financial_trxn ID) and 'contribution_id'.
+   */
+  protected function findRecordedRefund(string $refundId): ?array {
+    return Payment::get(FALSE)
+      ->addSelect('id', 'contribution_id')
+      ->addWhere('trxn_id', '=', $refundId)
+      ->addWhere('total_amount', '<', 0)
+      ->execute()
+      ->first();
+  }
+
+  /**
+   * Find a contribution in this processor's environment by one of its trxn_ids.
    *
    * @param string $trxnId
    *
    * @return int|null
    */
   protected function findContributionIdByTrxnId(string $trxnId): ?int {
+    // Payment.create appends each payment's trxn_id to the contribution's,
+    // comma-separated.
+    $like = addcslashes($trxnId, '%_\\');
     $contribution = Contribution::get(FALSE)
       ->addSelect('id')
-      ->addWhere('trxn_id', '=', $trxnId)
+      ->addClause('OR',
+        ['trxn_id', '=', $trxnId],
+        ['trxn_id', 'LIKE', "{$like},%"],
+        ['trxn_id', 'LIKE', "%,{$like}"],
+        ['trxn_id', 'LIKE', "%,{$like},%"]
+      )
       ->addWhere('is_test', '=', $this->gateway->isTestMode())
       ->execute()
       ->first();
@@ -989,7 +1153,7 @@ class CRM_Square_Reconciler {
     if (!empty($values['invoice_id'])) {
       // Contribution.repeattransaction does not accept invoice_id. Recording
       // the Square invoice lets later events for it (e.g. a successful retry
-      // after invoice.payment_failed) find this contribution.
+      // after invoice.scheduled_charge_failed) find this contribution.
       $this->updateContribution($contributionId, ['invoice_id' => $values['invoice_id']]);
     }
 
@@ -1030,6 +1194,39 @@ class CRM_Square_Reconciler {
   protected function updateContribution(int $contributionId, array $values): void {
     Contribution::update(FALSE)
       ->addWhere('id', '=', $contributionId)
+      ->setValues($values)
+      ->execute();
+  }
+
+  /**
+   * Set the fee on a recorded payment.
+   *
+   * @param int $financialTrxnId
+   * @param float $fee
+   * @param float $totalAmount
+   *   The payment's amount, for its net amount.
+   *
+   * @throws \CRM_Core_Exception
+   */
+  protected function updatePaymentFee(int $financialTrxnId, float $fee, float $totalAmount): void {
+    FinancialTrxn::update(FALSE)
+      ->addWhere('id', '=', $financialTrxnId)
+      ->addValue('fee_amount', $fee)
+      ->addValue('net_amount', $totalAmount - $fee)
+      ->execute();
+  }
+
+  /**
+   * Update fields on a recurring contribution.
+   *
+   * @param int $recurId
+   * @param array $values
+   *
+   * @throws \CRM_Core_Exception
+   */
+  protected function updateRecur(int $recurId, array $values): void {
+    ContributionRecur::update(FALSE)
+      ->addWhere('id', '=', $recurId)
       ->setValues($values)
       ->execute();
   }
@@ -1091,6 +1288,16 @@ class CRM_Square_Reconciler {
       CRM_Core_Payment_SquareDebugLogger::log('Square syncRefundFromSquare(): missing payment_id or refund_id, skipping.');
       return;
     }
+    if (in_array($refundStatus, ['REJECTED', 'FAILED'], TRUE)) {
+      // CiviCRM records only refunds Square has completed (see doRefund()),
+      // so this should not happen; if it does, it is not reversed
+      // automatically.
+      $recorded = $this->findRecordedRefund($refundId);
+      if ($recorded) {
+        Civi::log('square')->error("Square refund {$refundId} of payment {$paymentId} was {$refundStatus}, but CiviCRM recorded it as refunded on contribution {$recorded['contribution_id']}; reverse that refund manually.");
+      }
+      return;
+    }
     if (!in_array($refundStatus, ['COMPLETED', 'APPROVED'], TRUE)) {
       // refund.created normally reports PENDING; refund.updated follows once
       // Square completes (or rejects) the refund.
@@ -1099,21 +1306,13 @@ class CRM_Square_Reconciler {
     }
 
     $money = $refund['amount_money'] ?? NULL;
-    $refundAmount = ($money && isset($money['amount'])) ? ((float) $money['amount'] / 100) : NULL;
+    $refundAmount = ($money && isset($money['amount'])) ? CRM_Square_Currency::fromMinorUnits($money['amount'], $money['currency'] ?? NULL) : NULL;
     if ($refundAmount === NULL || $refundAmount <= 0) {
       Civi::log()->error("Square syncRefundFromSquare(): refund {$refundId} for payment {$paymentId} has no usable amount, skipping.");
       return;
     }
 
-    // refund.created and refund.updated can both report COMPLETED, in
-    // separate concurrent requests.
-    $lock = $this->acquireSquareLock('refund.' . $refundId);
-    try {
-      $this->recordSquareRefund($refund, $refundAmount);
-    }
-    finally {
-      $lock->release();
-    }
+    $this->recordSquareRefund($refund, $refundAmount);
   }
 
   /**
@@ -1141,40 +1340,61 @@ class CRM_Square_Reconciler {
       if ($original) {
         $original['contribution_id'] = $contributionId;
       }
-      if (!$original || !empty($original['payment_processor_id'])) {
+      if ($original && !empty($original['payment_processor_id'])) {
+        CRM_Core_Payment_SquareDebugLogger::log("Square syncRefundFromSquare(): Square payment {$paymentId} was recorded by another payment processor, skipping refund {$refundId}.");
+        return;
+      }
+      if (!$original) {
+        // Square does not deliver webhooks in order: the payment's own
+        // webhook (e.g. for a subscription installment, which only a webhook
+        // records) may not have been processed yet.
+        if ($this->isWithinWebhookGrace($refund['created_at'] ?? NULL)) {
+          throw new CRM_Core_Payment_SquareRetryableException("Square refund {$refundId} is for payment {$paymentId}, which is not recorded in CiviCRM yet; retrying in case its webhook has not been processed.");
+        }
         CRM_Core_Payment_SquareDebugLogger::log("Square syncRefundFromSquare(): no payment of this processor found for Square payment {$paymentId}, skipping refund {$refundId}.");
         return;
       }
     }
     $contributionId = (int) $original['contribution_id'];
 
-    // Idempotency: a replayed webhook (or refund.created and refund.updated
-    // both reporting COMPLETED), or a refund CiviCRM already recorded when
-    // staff refunded from CiviCRM (see doRefund()), must not refund twice.
-    if ($this->findContributionPayment($contributionId, $refundId)) {
-      CRM_Core_Payment_SquareDebugLogger::log("Square syncRefundFromSquare(): refund {$refundId} already recorded for contribution {$contributionId}, skipping.");
-      return;
+    // Share MJWShared's PaymentMJW.Refund lock so admin refunds and concurrent
+    // webhooks serialize the duplicate check and Payment.create together.
+    $lock = Civi::lockManager()->acquire('data.contribute.contribution.' . $contributionId);
+    if (!$lock->isAcquired()) {
+      throw new CRM_Core_Payment_SquareRetryableException("Could not acquire lock to record Square refund {$refundId} for contribution {$contributionId}.");
     }
+    try {
+      // Recheck after acquiring the lock: the admin action or another webhook
+      // may have recorded this refund while we waited.
+      if ($this->findContributionPayment($contributionId, $refundId)) {
+        CRM_Core_Payment_SquareDebugLogger::log("Square syncRefundFromSquare(): refund {$refundId} already recorded for contribution {$contributionId}, skipping.");
+        return;
+      }
 
-    $refundParams = [
-      'contribution_id' => $contributionId,
-      'total_amount' => -$refundAmount,
-      'trxn_id' => $refundId,
-      'trxn_date' => $this->squareTimestampToCivi($refund['updated_at'] ?? $refund['created_at'] ?? NULL),
-      'payment_processor_id' => $this->gateway->processorId(),
-      'is_send_contribution_notification' => 0,
-    ];
-    // A full refund is linked to the refunded payment, as CiviCRM's own
-    // Payment.cancel does. Not a partial one: Payment.create reverses every
-    // allocation of the cancelled payment in full, whatever the refund
-    // amount. A partial refund is allocated across the line items instead.
-    $isFullRefund = (int) round($refundAmount * 100) === (int) round((float) $original['total_amount'] * 100);
-    if ($isFullRefund) {
-      $refundParams['cancelled_payment_id'] = (int) $original['id'];
+      $refundParams = [
+        'contribution_id' => $contributionId,
+        'total_amount' => -$refundAmount,
+        'trxn_id' => $refundId,
+        'trxn_date' => $this->squareTimestampToCivi($refund['updated_at'] ?? $refund['created_at'] ?? NULL),
+        'payment_processor_id' => $this->gateway->processorId(),
+        'is_send_contribution_notification' => 0,
+      ];
+      // A full refund is linked to the refunded payment, as CiviCRM's own
+      // Payment.cancel does. Not a partial one: Payment.create reverses every
+      // allocation of the cancelled payment in full, whatever the refund
+      // amount. A partial refund is allocated across the line items instead.
+      $currency = $refund['amount_money']['currency'] ?? NULL;
+      $isFullRefund = CRM_Square_Currency::toMinorUnits($refundAmount, $currency) === CRM_Square_Currency::toMinorUnits($original['total_amount'], $currency);
+      if ($isFullRefund) {
+        $refundParams['cancelled_payment_id'] = (int) $original['id'];
+      }
+      $this->recordRefundPayment($refundParams);
+
+      CRM_Core_Payment_SquareDebugLogger::log("Square syncRefundFromSquare(): recorded refund {$refundId} ({$refundAmount}) against contribution {$contributionId}" . ($isFullRefund ? ", cancelling payment {$original['id']}." : '.'));
     }
-    $this->recordRefundPayment($refundParams);
-
-    CRM_Core_Payment_SquareDebugLogger::log("Square syncRefundFromSquare(): recorded refund {$refundId} ({$refundAmount}) against contribution {$contributionId}" . ($isFullRefund ? ", cancelling payment {$original['id']}." : '.'));
+    finally {
+      $lock->release();
+    }
   }
 
   /**
@@ -1193,8 +1413,10 @@ class CRM_Square_Reconciler {
   /**
    * Sync a Square subscription with the corresponding CiviCRM recurring contribution.
    *
-   * This is used when Square sends a webhook (subscription.updated or subscription.canceled)
-   * AND also may be triggered manually by scheduled jobs.
+   * Called for subscription.created and subscription.updated webhooks.
+   * Square has no subscription.canceled event: a cancellation arrives as a
+   * subscription.updated with a canceled_date, while its status is still
+   * ACTIVE (see applySubscriptionToRecur()).
    *
    * @param string $squareSubscriptionId
    *   The subscription ID from Square.
@@ -1208,17 +1430,13 @@ class CRM_Square_Reconciler {
     }
 
     // 1. Look up the subscription in Square
-    $response = $this->gateway->call(fn (SquareClient $client) => $client->subscriptions->get(
-      new GetSubscriptionsRequest(['subscriptionId' => $squareSubscriptionId])
-    ));
-    $sub = $response->getSubscription();
-
+    $sub = $this->getSquareSubscription($squareSubscriptionId);
     if (empty($sub)) {
       throw new CRM_Core_Exception("Square subscription {$squareSubscriptionId} not found.");
     }
 
     // 2. Find local CiviCRM recurring contribution
-    $recur = $this->findRecurBySubscriptionId($squareSubscriptionId);
+    $recur = $this->findOrLinkRecur($squareSubscriptionId, $sub);
     if (empty($recur)) {
       // No such recurring record exists — log and stop.
       CRM_Core_Payment_SquareDebugLogger::log("Square sync: No local contribution_recur record found for subscription {$squareSubscriptionId}");
@@ -1228,7 +1446,7 @@ class CRM_Square_Reconciler {
     // 3. Apply the status and amount. extractSubscriptionAmount() expects the
     // REST JSON shape; jsonSerialize() gives us that from the SDK object
     // without duplicating the extraction logic.
-    $this->applySubscriptionToRecur($recur, $sub->getStatus() ?? 'UNKNOWN', $this->extractSubscriptionAmount($sub->jsonSerialize()));
+    $this->applySubscriptionToRecur($recur, $sub->getStatus() ?? 'UNKNOWN', $this->extractSubscriptionAmount($sub->jsonSerialize()), $sub->getCanceledDate());
   }
 
   /**
@@ -1239,8 +1457,10 @@ class CRM_Square_Reconciler {
    * @param string $squareStatus
    * @param float|null $amount
    *   The subscription's price override, if any.
+   * @param string|null $canceledDate
+   *   The subscription's canceled_date (YYYY-MM-DD), if any.
    */
-  protected function applySubscriptionToRecur(array $recur, string $squareStatus, ?float $amount): void {
+  protected function applySubscriptionToRecur(array $recur, string $squareStatus, ?float $amount, ?string $canceledDate = NULL): void {
     $recurId = (int) $recur['id'];
     $currentStatus = (int) $recur['contribution_status_id'];
     CRM_Core_Payment_SquareDebugLogger::log("Square: applying subscription status {$squareStatus} to contribution_recur {$recurId} (current status {$currentStatus}).");
@@ -1250,10 +1470,22 @@ class CRM_Square_Reconciler {
       $updates['amount'] = (float) $amount;
     }
 
+    // A subscription cancelled in Square stays ACTIVE (or PENDING or PAUSED)
+    // until its canceled_date, the end of the period already paid for, and
+    // Square may send no webhook when it then becomes CANCELED. So the
+    // canceled_date is itself the cancellation; no further invoices follow.
+    if ($canceledDate && in_array(strtoupper($squareStatus), ['ACTIVE', 'PENDING', 'PAUSED'], TRUE)) {
+      CRM_Core_Payment_SquareDebugLogger::log("Square: subscription for contribution_recur {$recurId} is {$squareStatus} but cancelled as of {$canceledDate}; treating it as CANCELED.");
+      $squareStatus = 'CANCELED';
+    }
+
     $mappedStatus = CRM_Square_Status::mapSubscriptionStatus($squareStatus);
     if ($mappedStatus !== NULL && $mappedStatus !== $currentStatus) {
       if ($this->isRecurStatusChangeAllowed($currentStatus, $mappedStatus)) {
         $updates['contribution_status_id'] = $mappedStatus;
+        if ($mappedStatus === CRM_Square_Status::recurStatusId('Cancelled')) {
+          $updates['cancel_date'] = $canceledDate ? date('Y-m-d 00:00:00', strtotime($canceledDate)) : date('Y-m-d H:i:s');
+        }
       }
       else {
         CRM_Core_Payment_SquareDebugLogger::log("Square: not applying Square status {$squareStatus} to contribution_recur {$recurId}; its payment-driven status {$currentStatus} is kept.");
@@ -1265,10 +1497,7 @@ class CRM_Square_Reconciler {
       return;
     }
 
-    ContributionRecur::update(FALSE)
-      ->addWhere('id', '=', $recurId)
-      ->setValues($updates)
-      ->execute();
+    $this->updateRecur($recurId, $updates);
     CRM_Core_Payment_SquareDebugLogger::log("Square sync: Updated recurring contribution {$recurId}: " . json_encode($updates));
   }
 
@@ -1293,15 +1522,15 @@ class CRM_Square_Reconciler {
    * @return bool
    */
   protected function isRecurStatusChangeAllowed(int $currentStatusId, int $newStatusId): bool {
-    $pending = CRM_Square_Status::contributionStatusId('Pending');
+    $pending = CRM_Square_Status::recurStatusId('Pending');
     if ($newStatusId === $pending) {
       return FALSE;
     }
-    if ($newStatusId === CRM_Square_Status::contributionStatusId('In Progress')) {
+    if ($newStatusId === CRM_Square_Status::recurStatusId('In Progress')) {
       return !in_array($currentStatusId, [
         $pending,
-        CRM_Square_Status::contributionStatusId('Cancelled'),
-        CRM_Square_Status::contributionStatusId('Completed'),
+        CRM_Square_Status::recurStatusId('Cancelled'),
+        CRM_Square_Status::recurStatusId('Completed'),
       ], TRUE);
     }
     return TRUE;
@@ -1316,7 +1545,7 @@ class CRM_Square_Reconciler {
    */
   protected function extractSubscriptionAmount(array $subscription) {
     if (!empty($subscription['price_override_money']['amount'])) {
-      return ((float) $subscription['price_override_money']['amount']) / 100;
+      return CRM_Square_Currency::fromMinorUnits($subscription['price_override_money']['amount'], $subscription['price_override_money']['currency'] ?? NULL);
     }
 
     // If no override, fall back to catalog plan pricing (unavailable via subscription API alone).
@@ -1358,7 +1587,7 @@ class CRM_Square_Reconciler {
       return;
     }
 
-    $recur = $this->findRecurBySubscriptionId($subscriptionId);
+    $recur = $this->findOrLinkRecur($subscriptionId);
     if (!$recur) {
       $this->handleUnknownSubscription($subscriptionId, $invoice['updated_at'] ?? $invoice['created_at'] ?? NULL, "invoice {$invoiceId}");
       return;
@@ -1368,7 +1597,7 @@ class CRM_Square_Reconciler {
   }
 
   /**
-   * Sync a Square invoice.payment_failed webhook event.
+   * Sync a Square invoice.scheduled_charge_failed webhook event.
    *
    * @param array $invoice
    *   Invoice object from the webhook payload.
@@ -1379,13 +1608,24 @@ class CRM_Square_Reconciler {
     $invoiceId = $invoice['id'] ?? NULL;
     $subscriptionId = $invoice['subscription_id'] ?? NULL;
     if (!$invoiceId || !$subscriptionId) {
-      CRM_Core_Payment_SquareDebugLogger::log('Square: invoice.payment_failed missing invoice ID or subscription_id, skipping.');
+      CRM_Core_Payment_SquareDebugLogger::log('Square: invoice.scheduled_charge_failed missing invoice ID or subscription_id, skipping.');
       return;
     }
 
-    $recur = $this->findRecurBySubscriptionId($subscriptionId);
+    $recur = $this->findOrLinkRecur($subscriptionId);
     if (!$recur) {
       $this->handleUnknownSubscription($subscriptionId, $invoice['updated_at'] ?? $invoice['created_at'] ?? NULL, "invoice {$invoiceId}");
+      return;
+    }
+
+    // Square does not deliver webhooks in order, and retries a failed charge,
+    // so the invoice may have been paid since. A stale failure must not mark
+    // anything Failed — in particular not create a Failed duplicate of the
+    // first installment, whose (checkout) contribution carries CiviCRM's
+    // invoice ID rather than Square's. Square's current invoice decides.
+    $currentStatus = $this->getSquareInvoiceStatus($invoiceId);
+    if (in_array($currentStatus, self::PAID_INVOICE_STATUSES, TRUE)) {
+      CRM_Core_Payment_SquareDebugLogger::log("Square: ignoring invoice.scheduled_charge_failed for invoice {$invoiceId}; Square now reports it {$currentStatus}.");
       return;
     }
 
@@ -1428,29 +1668,13 @@ class CRM_Square_Reconciler {
   }
 
   /**
-   * Handle a subscription cancellation event coming from Square.
+   * Find the contact a Square payment made outside CiviCRM belongs to.
    *
-   * Triggered by webhook event: subscription.canceled.
-   *
-   * @param array $payload
-   *   Full decoded JSON body from Square webhook.
-   */
-  public function handleSubscriptionCancelled(array $payload) {
-    if (empty($payload['data']['object']['subscription']['id'])) {
-      CRM_Core_Payment_SquareDebugLogger::log('Square webhook: subscription.canceled missing subscription ID.');
-      return;
-    }
-
-    $this->syncSubscriptionCancellationFromSquare($payload['data']['object']['subscription']['id']);
-  }
-
-  /**
-   * Find the contact ID associated with a Square payment.
-   *
-   * Attempts to resolve contact by:
-   * 1. Customer reference_id (if set in Square)
-   * 2. Email address from payment receipt
-   * 3. Contribution reference_id if payment is linked to existing contribution.
+   * By the payment's Square customer, if this processor has mapped it to a
+   * contact; otherwise by the receipt email, if exactly one contact has it
+   * as their primary email (family members often share one). Neither the
+   * customer's nor the payment's reference_id is trusted: other Square
+   * products and integrations set those to their own values.
    *
    * @param array $payment
    *   Payment object from Square API.
@@ -1459,55 +1683,22 @@ class CRM_Square_Reconciler {
    *   CiviCRM contact ID or NULL if not found.
    */
   protected function findContactIdForPayment(array $payment) {
-    // 1. Try to find via customer reference_id
     $customerId = $payment['customer_id'] ?? NULL;
     if ($customerId) {
-      try {
-        $customerResponse = $this->gateway->client()->customers->get(new GetCustomersRequest(['customerId' => $customerId]));
-        $customer = $customerResponse->getCustomer();
-        if (!empty($customer) && !empty($customer->getReferenceId())) {
-          $refId = $customer->getReferenceId();
-          if (ctype_digit((string) $refId)) {
-            $contact = Contact::get(FALSE)
-              ->addWhere('id', '=', (int) $refId)
-              ->addSelect('id')
-              ->execute()
-              ->first();
-            if (!empty($contact)) {
-              return (int) $contact['id'];
-            }
-          }
-        }
-      }
-      catch (\Throwable $e) {
-        CRM_Core_Payment_SquareDebugLogger::log('Square findContactIdForPayment(): customer lookup error: ' . $e->getMessage());
+      $contactId = $this->findContactIdBySquareCustomer((string) $customerId);
+      if ($contactId) {
+        return $contactId;
       }
     }
 
-    // 2. Try via reference_id on payment (if it points to a contribution)
-    $referenceId = $payment['reference_id'] ?? NULL;
-    if ($referenceId && ctype_digit((string) $referenceId)) {
-      $contribution = Contribution::get(FALSE)
-        ->addWhere('id', '=', (int) $referenceId)
-        ->addWhere('is_test', 'IN', [TRUE, FALSE])
-        ->addSelect('contact_id')
-        ->execute()
-        ->first();
-      if (!empty($contribution)) {
-        return (int) $contribution['contact_id'];
+    $receiptEmail = trim((string) ($payment['buyer_email_address'] ?? ''));
+    if ($receiptEmail !== '') {
+      $contactIds = $this->findContactIdsByEmail($receiptEmail);
+      if (count($contactIds) === 1) {
+        return $contactIds[0];
       }
-    }
-
-    // 3. Try via receipt email (if available)
-    $receiptEmail = $payment['receipt_email'] ?? NULL;
-    if ($receiptEmail) {
-      $contact = Contact::get(FALSE)
-        ->addWhere('email', '=', $receiptEmail)
-        ->addSelect('id')
-        ->execute()
-        ->first();
-      if (!empty($contact)) {
-        return (int) $contact['id'];
+      if (count($contactIds) > 1) {
+        CRM_Core_Payment_SquareDebugLogger::log('Square findContactIdForPayment(): ' . count($contactIds) . " contacts share the email of payment {$payment['id']}; not choosing one.");
       }
     }
 
@@ -1515,39 +1706,44 @@ class CRM_Square_Reconciler {
   }
 
   /**
-   * Sync a Square subscription cancellation into CiviCRM.
+   * The contact this processor has mapped a Square customer to.
    *
-   * Called when Square sends subscription.canceled or subscription.deleted webhook.
+   * @param string $customerId
    *
-   * @param string $squareSubscriptionId
-   *   The subscription ID from Square.
-   *
-   * @throws \CRM_Core_Exception
+   * @return int|null
    */
-  public function syncSubscriptionCancellationFromSquare($squareSubscriptionId) {
-    CRM_Core_Payment_SquareDebugLogger::log("Square syncSubscriptionCancellationFromSquare(): called from SquareIPN for subscription_id={$squareSubscriptionId}.");
-    if (empty($squareSubscriptionId)) {
-      CRM_Core_Payment_SquareDebugLogger::log('Square syncSubscriptionCancellationFromSquare(): missing subscription ID, skipping.');
-      return;
-    }
+  protected function findContactIdBySquareCustomer(string $customerId): ?int {
+    $contactId = CRM_Core_DAO::singleValueQuery(
+      'SELECT contact_id FROM square_customer_map WHERE square_customer_id = %1 AND payment_processor_id = %2',
+      [1 => [$customerId, 'String'], 2 => [$this->gateway->processorId(), 'Integer']]
+    );
+    return $contactId ? (int) $contactId : NULL;
+  }
 
-    // Find the recurring contribution linked to this subscription.
-    $recur = $this->findRecurBySubscriptionId($squareSubscriptionId);
+  /**
+   * Contacts (not deleted) whose primary email is the given one.
+   *
+   * @param string $email
+   *
+   * @return int[]
+   *   At most two: enough to tell whether it is unique.
+   */
+  protected function findContactIdsByEmail(string $email): array {
+    return array_map('intval', Contact::get(FALSE)
+      ->addSelect('id')
+      ->addWhere('email_primary.email', '=', $email)
+      ->setLimit(2)
+      ->execute()
+      ->column('id'));
+  }
 
-    if (empty($recur)) {
-      CRM_Core_Payment_SquareDebugLogger::log("Square syncSubscriptionCancellationFromSquare(): no recurring contribution found for subscription {$squareSubscriptionId}, skipping.");
-      return;
-    }
-
-    $recurId = (int) $recur['id'];
-    CRM_Core_Payment_SquareDebugLogger::log("Square syncSubscriptionCancellationFromSquare(): found contribution_recur {$recurId} (current status {$recur['contribution_status_id']}) for subscription {$squareSubscriptionId}, marking Cancelled.");
-
-    ContributionRecur::update(FALSE)
-      ->addWhere('id', '=', $recurId)
-      ->addValue('contribution_status_id', CRM_Square_Status::contributionStatusId('Cancelled'))
-      ->execute();
-
-    CRM_Core_Payment_SquareDebugLogger::log("Square syncSubscriptionCancellationFromSquare(): Updated recurring contribution {$recurId} to Cancelled for subscription {$squareSubscriptionId}.");
+  /**
+   * Whether Square payments made outside CiviCRM are imported as contributions.
+   *
+   * @return bool
+   */
+  protected function isImportingExternalPayments(): bool {
+    return (bool) Civi::settings()->get('square_import_external_payments');
   }
 
 }

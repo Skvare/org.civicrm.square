@@ -15,6 +15,15 @@ class CRM_Core_Payment_Square_RefundTest extends CRM_Core_Payment_Square_SquareL
   protected function setUp(): void {
     parent::setUp();
     $this->payFirstInstallment();
+    $lock = $this->getMockBuilder(stdClass::class)->addMethods(['isAcquired', 'release'])->getMock();
+    $lock->method('isAcquired')->willReturn(TRUE);
+    Civi::$lockManager = $this->getMockBuilder(stdClass::class)->addMethods(['acquire'])->getMock();
+    Civi::$lockManager->method('acquire')->willReturn($lock);
+  }
+
+  protected function tearDown(): void {
+    Civi::$lockManager = NULL;
+    parent::tearDown();
   }
 
   public function testPendingRefundRecordsNothing(): void {
@@ -22,6 +31,43 @@ class CRM_Core_Payment_Square_RefundTest extends CRM_Core_Payment_Square_SquareL
 
     $this->assertSame([], $this->refunds());
     $this->assertSame('Completed', $this->processor->contributions[self::SIGNUP_CONTRIBUTION_ID]['status']);
+  }
+
+  /**
+   * A refund CiviCRM recorded that Square then reports rejected.
+   *
+   * CiviCRM records only refunds Square has completed (see doRefund()), so
+   * this should not happen; if it does, it is reported for manual follow-up.
+   *
+   * @dataProvider refusedRefundStatusProvider
+   */
+  public function testRefusedRefundAlreadyRecordedIsReportedNotReversed(string $status): void {
+    $this->processor->payments[800] = [
+      'contribution_id' => self::SIGNUP_CONTRIBUTION_ID,
+      'trxn_id' => self::REFUND_ID,
+      'total_amount' => -19.00,
+      'payment_processor_id' => self::PROCESSOR_ID,
+    ];
+
+    $this->deliver($this->refundEvent('refund.updated', $status, 1900));
+
+    $this->assertCount(1, $this->refunds());
+    $expected = "Square refund REFUND-1 of payment " . self::FIRST['payment_id'] . " was {$status}, but CiviCRM recorded it as refunded on contribution " . self::SIGNUP_CONTRIBUTION_ID . '; reverse that refund manually.';
+    $this->assertSame([['error', $expected]], Civi::$logged);
+  }
+
+  /**
+   * @dataProvider refusedRefundStatusProvider
+   */
+  public function testRefusedRefundNeverRecordedIsIgnored(string $status): void {
+    $this->deliver($this->refundEvent('refund.updated', $status, 1900));
+
+    $this->assertSame([], $this->refunds());
+    $this->assertSame([], Civi::$logged);
+  }
+
+  public static function refusedRefundStatusProvider(): array {
+    return [['REJECTED'], ['FAILED']];
   }
 
   /**
@@ -81,16 +127,151 @@ class CRM_Core_Payment_Square_RefundTest extends CRM_Core_Payment_Square_SquareL
     $this->assertCount(1, $this->refunds());
   }
 
+  public function testAdminRefundCompletedWhileAcquiringLockIsNotRecordedTwice(): void {
+    $lock = $this->getMockBuilder(stdClass::class)->addMethods(['isAcquired', 'release'])->getMock();
+    $lock->method('isAcquired')->willReturn(TRUE);
+    $lock->expects($this->once())->method('release');
+    Civi::$lockManager = $this->getMockBuilder(stdClass::class)->addMethods(['acquire'])->getMock();
+    Civi::$lockManager->expects($this->once())->method('acquire')
+      ->with('data.contribute.contribution.' . self::SIGNUP_CONTRIBUTION_ID)
+      ->willReturnCallback(function () use ($lock) {
+        // The admin action finishes recording while the webhook waits for
+        // its contribution lock. The duplicate lookup must happen afterwards.
+        $this->processor->payments[800] = [
+          'contribution_id' => self::SIGNUP_CONTRIBUTION_ID,
+          'trxn_id' => self::REFUND_ID,
+          'total_amount' => -5.00,
+          'payment_processor_id' => self::PROCESSOR_ID,
+        ];
+        return $lock;
+      });
+
+    $this->deliver($this->refundEvent('refund.updated', 'COMPLETED', 500));
+
+    $this->assertCount(1, $this->refunds());
+    $this->assertSame(-5.00, array_sum(array_column($this->refunds(), 'total_amount')));
+  }
+
+  public function testBusyContributionLockLeavesRefundForRetry(): void {
+    $lock = $this->getMockBuilder(stdClass::class)->addMethods(['isAcquired', 'release'])->getMock();
+    $lock->method('isAcquired')->willReturn(FALSE);
+    $lock->expects($this->never())->method('release');
+    Civi::$lockManager = $this->getMockBuilder(stdClass::class)->addMethods(['acquire'])->getMock();
+    Civi::$lockManager->expects($this->once())->method('acquire')
+      ->with('data.contribute.contribution.' . self::SIGNUP_CONTRIBUTION_ID)->willReturn($lock);
+
+    try {
+      $this->deliver($this->refundEvent('refund.updated', 'COMPLETED', 500));
+      $this->fail('Lock contention must leave the webhook for retry.');
+    }
+    catch (CRM_Core_Payment_SquareRetryableException $e) {
+      $this->assertStringContainsString('Could not acquire lock', $e->getMessage());
+    }
+    $this->assertSame([], $this->refunds());
+  }
+
+  public function testContributionLockCoversDuplicateCheckAndWrite(): void {
+    $held = FALSE;
+    $lock = $this->getMockBuilder(stdClass::class)->addMethods(['isAcquired', 'release'])->getMock();
+    $lock->method('isAcquired')->willReturn(TRUE);
+    $lock->expects($this->once())->method('release')->willReturnCallback(function () use (&$held) {
+      $held = FALSE;
+    });
+    Civi::$lockManager = $this->getMockBuilder(stdClass::class)->addMethods(['acquire'])->getMock();
+    Civi::$lockManager->expects($this->once())->method('acquire')
+      ->with('data.contribute.contribution.' . self::SIGNUP_CONTRIBUTION_ID)
+      ->willReturnCallback(function () use ($lock, &$held) {
+        $held = TRUE;
+        return $lock;
+      });
+    $reconciler = $this->getMockBuilder(CRM_Core_Payment_Square_FakeLedgerReconciler::class)
+      ->setConstructorArgs([$this->callMethod($this->processor, 'gateway'), $this->processor])
+      ->onlyMethods(['findContributionPayment', 'recordRefundPayment'])->getMock();
+    $reconciler->expects($this->once())->method('findContributionPayment')
+      ->with(self::SIGNUP_CONTRIBUTION_ID, self::REFUND_ID)
+      ->willReturnCallback(function () use (&$held) {
+        $this->assertTrue($held, 'The duplicate check must hold the contribution lock.');
+        return NULL;
+      });
+    $reconciler->expects($this->once())->method('recordRefundPayment')
+      ->willReturnCallback(function () use (&$held) {
+        $this->assertTrue($held, 'The refund write must still hold the contribution lock.');
+      });
+
+    $event = $this->refundEvent('refund.updated', 'COMPLETED', 500);
+    $reconciler->syncRefundFromSquare($event['data']['object']['refund']);
+
+    $this->assertFalse($held);
+  }
+
   /**
-   * A refund of a payment no contribution here records is ignored.
+   * @dataProvider failingRefundOperationProvider
+   */
+  public function testContributionLockReleasedOnFailure(string $operation): void {
+    $lock = $this->getMockBuilder(stdClass::class)->addMethods(['isAcquired', 'release'])->getMock();
+    $lock->method('isAcquired')->willReturn(TRUE);
+    $lock->expects($this->once())->method('release');
+    Civi::$lockManager = $this->getMockBuilder(stdClass::class)->addMethods(['acquire'])->getMock();
+    Civi::$lockManager->expects($this->once())->method('acquire')
+      ->with('data.contribute.contribution.' . self::SIGNUP_CONTRIBUTION_ID)->willReturn($lock);
+    $reconciler = $this->getMockBuilder(CRM_Core_Payment_Square_FakeLedgerReconciler::class)
+      ->setConstructorArgs([$this->callMethod($this->processor, 'gateway'), $this->processor])
+      ->onlyMethods([$operation])->getMock();
+    $reconciler->expects($this->once())->method($operation)->willThrowException(new RuntimeException('Ledger failed.'));
+
+    $event = $this->refundEvent('refund.updated', 'COMPLETED', 500);
+    $this->expectException(RuntimeException::class);
+    $this->expectExceptionMessage('Ledger failed.');
+    $reconciler->syncRefundFromSquare($event['data']['object']['refund']);
+  }
+
+  public static function failingRefundOperationProvider(): array {
+    return [['findContributionPayment'], ['recordRefundPayment']];
+  }
+
+  /**
+   * A refund of a payment no contribution here records is ignored, once it is old.
    */
   public function testRefundOfAnUnknownPaymentIsIgnored(): void {
-    $event = $this->refundEvent('refund.updated', 'COMPLETED', 1900);
-    $event['data']['object']['refund']['payment_id'] = 'SOMEONE-ELSES-PAYMENT';
+    $event = $this->refundEvent('refund.updated', 'COMPLETED', 1900, 'SOMEONE-ELSES-PAYMENT', gmdate('Y-m-d\TH:i:s\Z', time() - 7200));
 
     $this->deliver($event);
 
     $this->assertSame([], $this->refunds());
+  }
+
+  /**
+   * A recent refund of a payment not recorded yet is retried, not dropped.
+   */
+  public function testRefundOfAPaymentNotRecordedYetIsRetried(): void {
+    $event = $this->refundEvent('refund.updated', 'COMPLETED', 1900, self::SECOND['payment_id']);
+
+    $this->expectException(CRM_Core_Payment_SquareRetryableException::class);
+    $this->deliver($event);
+  }
+
+  /**
+   * Square does not deliver webhooks in order: the refund may come first.
+   */
+  public function testRefundDeliveredBeforeItsPaymentIsRecordedOnRetry(): void {
+    $refund = $this->refundEvent('refund.updated', 'COMPLETED', 1900, self::SECOND['payment_id']);
+    try {
+      $this->deliver($refund);
+      $this->fail('The refund should have been left for a retry.');
+    }
+    catch (CRM_Core_Payment_SquareRetryableException $e) {
+      // Left 'new' in the queue for the scheduled job.
+    }
+    $this->assertSame([], $this->refunds());
+
+    $this->squareBills(self::SECOND);
+    $this->deliver($this->invoicePaymentMadeEvent(self::SECOND));
+    // The scheduled job retries the refund.
+    $this->deliver($refund);
+
+    $refunds = $this->refunds();
+    $this->assertCount(1, $refunds);
+    $this->assertSame(self::REFUND_ID, reset($refunds)['trxn_id']);
   }
 
   /**
@@ -167,11 +348,15 @@ class CRM_Core_Payment_Square_RefundTest extends CRM_Core_Payment_Square_SquareL
    * @param string $type
    * @param string $status
    * @param int $amountCents
+   * @param string $paymentId
+   *   The refunded Square payment; the first installment's by default.
+   * @param string|null $createdAt
+   *   When Square created the refund; now by default.
    *
    * @return array
    */
-  private function refundEvent(string $type, string $status, int $amountCents): array {
-    $now = gmdate('Y-m-d\TH:i:s\Z');
+  private function refundEvent(string $type, string $status, int $amountCents, string $paymentId = self::FIRST['payment_id'], ?string $createdAt = NULL): array {
+    $now = $createdAt ?? gmdate('Y-m-d\TH:i:s\Z');
     return [
       'type' => $type,
       'event_id' => bin2hex(random_bytes(8)),
@@ -180,7 +365,7 @@ class CRM_Core_Payment_Square_RefundTest extends CRM_Core_Payment_Square_SquareL
         'object' => [
           'refund' => [
             'id' => self::REFUND_ID,
-            'payment_id' => self::FIRST['payment_id'],
+            'payment_id' => $paymentId,
             'status' => $status,
             'amount_money' => ['amount' => $amountCents, 'currency' => 'USD'],
             'created_at' => $now,

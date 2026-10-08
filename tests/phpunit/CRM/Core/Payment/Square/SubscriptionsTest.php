@@ -115,6 +115,31 @@ class CRM_Core_Payment_Square_SubscriptionsTest extends CRM_Core_Payment_Square_
   }
 
   /**
+   * @dataProvider cadenceProvider
+   */
+  public function testEverySquareCadenceIsAvailable(string $unit, int $interval, string $cadence): void {
+    $this->assertSame($cadence, $this->callMethod($this->subscriptions(), 'resolveCadence', [$unit, $interval]));
+  }
+
+  public static function cadenceProvider(): array {
+    return [
+      ['day', 1, 'DAILY'],
+      ['week', 1, 'WEEKLY'],
+      ['week', 2, 'EVERY_TWO_WEEKS'],
+      ['day', 30, 'THIRTY_DAYS'],
+      ['day', 60, 'SIXTY_DAYS'],
+      ['day', 90, 'NINETY_DAYS'],
+      ['month', 1, 'MONTHLY'],
+      ['month', 2, 'EVERY_TWO_MONTHS'],
+      ['month', 3, 'QUARTERLY'],
+      ['month', 4, 'EVERY_FOUR_MONTHS'],
+      ['month', 6, 'EVERY_SIX_MONTHS'],
+      ['year', 1, 'ANNUAL'],
+      ['year', 2, 'EVERY_TWO_YEARS'],
+    ];
+  }
+
+  /**
    * Changing the amount sends Square the subscription's current version.
    */
   public function testChangeAmountOverridesThePriceAtTheCurrentVersion(): void {

@@ -422,11 +422,11 @@
       <h2 class="section-title">What it handles</h2>
       <div class="grid-features">
         <div class="feature"><h3>One-time payments</h3><p>Card charges through Square's Payments API for contributions, event fees, and donations.</p></div>
-        <div class="feature"><h3>Recurring contributions</h3><p>Square Subscriptions API drives renewals; eight cadences from daily to annual.</p></div>
+        <div class="feature"><h3>Recurring contributions</h3><p>Square Subscriptions API drives renewals; thirteen cadences from daily to every two years.</p></div>
         <div class="feature"><h3>Refunds</h3><p>Full and partial refunds issued through Square's Refunds API from the CiviCRM contribution.</p></div>
-        <div class="feature"><h3>Subscription changes</h3><p>Cancellations made in CiviCRM sync forward to the live Square subscription.</p></div>
+        <div class="feature"><h3>Subscription changes</h3><p>Cancellations and amount changes made in CiviCRM sync forward to the live Square subscription; a cancellation made in Square marks the recurring contribution Cancelled.</p></div>
         <div class="feature"><h3>Card-on-file</h3><p>Cards save as standard CiviCRM PaymentToken records — one contact can hold several across processors.</p></div>
-        <div class="feature"><h3>Customer deduplication</h3><p>Square customers are matched and reused by email and reference ID instead of duplicating on every charge.</p></div>
+        <div class="feature"><h3>Customer deduplication</h3><p>Square customers are matched and reused by reference ID and email instead of duplicating on every charge — but never shared between contacts, such as family members with one email address.</p></div>
         <div class="feature"><h3>Webhook reconciliation</h3><p>Every Square event is signature-verified, deduplicated, queued, and logged before it touches a record.</p></div>
         <div class="feature"><h3>Sandbox &amp; production</h3><p>Fully separate credentials and data per environment, switchable per processor instance.</p></div>
       </div>
@@ -444,7 +444,7 @@
             <tr><td class="mono">CRM/Core/Payment/SquareIPN.php</td><td>Webhook filtering, signature verification, deduplication, queue persistence, processing.</td></tr>
             <tr><td class="mono">CRM/Core/Payment/SquareDebugLogger.php</td><td>Opt-in diagnostic logging, gated by a setting so it's off by default.</td></tr>
             <tr><td class="mono">CRM/Square/Upgrader.php</td><td>Creates <code>square_customer_map</code>, migrates legacy data, drops the table on uninstall.</td></tr>
-            <tr><td class="mono">js/square.js</td><td>Mounts the Square card element and tokenizes on submit, across native and Webform forms.</td></tr>
+            <tr><td class="mono">js/square.js</td><td>Mounts the Square card element and tokenizes on submit, across native and Webform forms; keeps the card form's ZIP in step with the billing address's.</td></tr>
             <tr><td class="mono">managed/PaymentProcessorType.mgd.php</td><td>Registers "Square" as a selectable payment processor type.</td></tr>
           </tbody>
         </table>
@@ -499,13 +499,12 @@ xml/Menu/<span class="path">square.xml</span>            <span class="note">civi
           <thead><tr><th>Event</th><th>Action</th></tr></thead>
           <tbody>
             <tr><td class="mono">subscription.created</td><td>Syncs subscription status to ContributionRecur</td></tr>
-            <tr><td class="mono">subscription.updated</td><td>Syncs subscription status/amount to ContributionRecur</td></tr>
-            <tr><td class="mono">subscription.canceled</td><td>Marks ContributionRecur as Cancelled</td></tr>
-            <tr><td class="mono">invoice.created</td><td>Creates a Pending contribution for the upcoming invoice</td></tr>
-            <tr><td class="mono">invoice.payment_made</td><td>Reconciles the paid invoice</td></tr>
-            <tr><td class="mono">invoice.payment_failed</td><td>Reconciles the failed invoice</td></tr>
-            <tr><td class="mono">payment.updated</td><td>Reconciles an existing contribution</td></tr>
-            <tr><td class="mono">refund.created</td><td>Reconciles a refund</td></tr>
+            <tr><td class="mono">subscription.updated</td><td>Syncs subscription status/amount to ContributionRecur; a cancellation arrives here with a canceled_date (the status stays ACTIVE until then) and marks it Cancelled</td></tr>
+            <tr><td class="mono">invoice.created</td><td>Nothing is recorded: the invoice is still a draft Square has not charged</td></tr>
+            <tr><td class="mono">invoice.payment_made</td><td>Records the paid installment</td></tr>
+            <tr><td class="mono">invoice.scheduled_charge_failed</td><td>Marks the failed installment's contribution Failed</td></tr>
+            <tr><td class="mono">payment.updated</td><td>Completes a one-time contribution, or records a subscription installment; payments taken outside CiviCRM are ignored unless importing them is enabled in Square Settings</td></tr>
+            <tr><td class="mono">refund.created, refund.updated</td><td>Records a completed refund as a negative payment</td></tr>
           </tbody>
         </table>
       </div>

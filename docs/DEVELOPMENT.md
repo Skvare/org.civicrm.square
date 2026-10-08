@@ -25,10 +25,50 @@ GitHub Actions (`.github/workflows/ci.yml`) runs the linter, Composer
 validation and PHPUnit on PHP 8.2, 8.3 and 8.4, and PHPCS and PHPStan
 against CiviCRM 6.16.5.
 
-Not yet covered: tests against a real CiviCRM database (e.g. `cv` and
-`Civi\Test` headless tests on a buildkit site) and browser tests of the
-card form. The in-memory fakes stand in for, but do not prove, CiviCRM's own
-behaviour.
+The in-memory fakes stand in for, but do not prove, CiviCRM's own
+behaviour — the stand-ins in `tests/phpunit/bootstrap.php` once let a
+lookup of 'In Progress' in the wrong option group pass. So keep their
+option values identical to a fresh CiviCRM 6.16 install, and cover CiviCRM
+API behaviour in the headless suite.
+
+## Headless tests
+
+`tests/phpunit-headless/` runs against a real CiviCRM through `cv` and
+`Civi\Test::headless()`: status lookups, Contact email lookups,
+Payment.create, Contribution.repeattransaction and refunds, the contact
+merge hook, and processor deletion. Square is still mocked at the SDK
+client.
+
+**Only run it on a civibuild (buildkit) site** whose `CIVICRM_UF=UnitTests`
+configuration points at a dedicated test database: `Civi\Test::headless()`
+drops every table in the database it is given. The mjwshared extension must
+be present on the site.
+
+```bash
+cd /path/to/buildkit/site
+CIVICRM_UF=UnitTests /path/to/org.uschess.square/vendor/bin/phpunit \
+  --configuration /path/to/org.uschess.square/tests/phpunit-headless/phpunit.xml.dist
+```
+
+Not yet covered: automated tests of `js/square.js` and browser tests of the
+card form (including keeping its ZIP/postal code in step with the billing
+address's).
+
+## Release build
+
+The committed `vendor/` includes the development tools (PHPUnit, PHPCS)
+that CI uses. A release must not ship them under the web root. Build the
+release from a clean export with only the runtime dependencies:
+
+```bash
+mkdir -p /tmp/release
+git archive --format=tar --prefix=org.uschess.square/ HEAD | tar -x -C /tmp/release
+cd /tmp/release/org.uschess.square
+composer install --no-dev --optimize-autoloader
+rm -rf tests .github phpcs.xml.dist phpstan.neon.dist phpstan-baseline.neon
+```
+
+## Code style
 
 The extension uses CiviCRM's two-space, Drupal-derived style. `.editorconfig`
 defines editor whitespace rules, and `phpcs.xml.dist` is the authoritative lint

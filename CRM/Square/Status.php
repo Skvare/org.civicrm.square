@@ -16,6 +16,18 @@ class CRM_Square_Status {
   }
 
   /**
+   * Resolve a recurring contribution's contribution_status_id by name.
+   *
+   * Recurring contributions use their own option group
+   * (contribution_recur_status), which has statuses — In Progress, Overdue,
+   * Processing, Failing — that contribution_status does not, and gives
+   * values 7 and 8 different meanings.
+   */
+  public static function recurStatusId(string $name): int {
+    return self::pseudoConstantId('contribution_status_id', $name, 'CRM_Contribute_BAO_ContributionRecur');
+  }
+
+  /**
    * Resolve a payment_instrument_id by name without relying on installation-specific IDs.
    */
   public static function paymentInstrumentId(string $name): int {
@@ -30,14 +42,19 @@ class CRM_Square_Status {
   }
 
   /**
-   * Resolve a Contribution-entity pseudoconstant value by name.
+   * Resolve a pseudoconstant value by name.
    *
    * Replaces the deprecated CRM_Contribute_PseudoConstant::contributionStatus()
    * (and avoids hard-coding installation-specific numeric IDs for statuses,
    * payment instruments, and financial types).
+   *
+   * @param string $field
+   * @param string $name
+   * @param string $baoName
+   *   The entity whose field it is; Contribution unless given.
    */
-  public static function pseudoConstantId(string $field, string $name): int {
-    $id = \CRM_Core_PseudoConstant::getKey('CRM_Contribute_BAO_Contribution', $field, $name);
+  public static function pseudoConstantId(string $field, string $name, string $baoName = 'CRM_Contribute_BAO_Contribution'): int {
+    $id = \CRM_Core_PseudoConstant::getKey($baoName, $field, $name);
     if ($id === FALSE || $id === NULL) {
       throw new \CRM_Core_Exception("CiviCRM {$field} '{$name}' is unavailable.");
     }
@@ -45,7 +62,7 @@ class CRM_Square_Status {
   }
 
   /**
-   * Map Square subscription statuses to CiviCRM contribution_status_id.
+   * Map Square subscription statuses to a recurring contribution's contribution_status_id.
    *
    * @param string $squareStatus
    *
@@ -61,19 +78,19 @@ class CRM_Square_Status {
     switch ($squareStatus) {
       case 'PENDING':
       case 'PAUSED':
-        return self::contributionStatusId('Pending');
+        return self::recurStatusId('Pending');
 
       case 'ACTIVE':
-        return self::contributionStatusId('In Progress');
+        return self::recurStatusId('In Progress');
 
       case 'COMPLETED':
-        return self::contributionStatusId('Completed');
+        return self::recurStatusId('Completed');
 
       case 'CANCELED':
-        return self::contributionStatusId('Cancelled');
+        return self::recurStatusId('Cancelled');
 
       case 'DEACTIVATED':
-        return self::contributionStatusId('Failed');
+        return self::recurStatusId('Failed');
     }
 
     // If unknown, don't change local status.

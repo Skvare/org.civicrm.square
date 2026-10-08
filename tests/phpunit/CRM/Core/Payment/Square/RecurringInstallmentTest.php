@@ -112,6 +112,8 @@ class CRM_Core_Payment_Square_RecurringInstallmentTest extends CRM_Core_Payment_
 
     $this->assertFirstInstallmentRecordedOnce();
     $this->assertSame(0.93, $this->processor->contributions[self::SIGNUP_CONTRIBUTION_ID]['fee_amount']);
+    // On the payment too, so CiviCRM's recalculation from payments keeps it.
+    $this->assertSame(0.93, reset($this->processor->payments)['fee_amount']);
   }
 
   /**
@@ -391,7 +393,7 @@ class CRM_Core_Payment_Square_RecurringInstallmentTest extends CRM_Core_Payment_
    * A failed first charge leaves the checkout's contribution Pending — no Failed duplicate.
    */
   public function testFailedFirstChargeKeepsTheCheckoutContributionPending(): void {
-    $this->deliver($this->invoicePaymentFailedEvent(self::FIRST));
+    $this->deliver($this->invoiceScheduledChargeFailedEvent(self::FIRST));
 
     $this->assertCount(1, $this->seriesContributions());
     $this->assertSame('Pending', $this->processor->contributions[self::SIGNUP_CONTRIBUTION_ID]['status']);
@@ -408,7 +410,7 @@ class CRM_Core_Payment_Square_RecurringInstallmentTest extends CRM_Core_Payment_
   public function testFailedLaterInstallmentIsCompletedWhenCollected(): void {
     $this->payFirstInstallment();
 
-    $this->deliver($this->invoicePaymentFailedEvent(self::SECOND));
+    $this->deliver($this->invoiceScheduledChargeFailedEvent(self::SECOND));
     $this->assertCount(2, $this->seriesContributions());
     $failed = $this->seriesContributions()[1];
     $this->assertSame('Failed', $failed['status']);
@@ -421,6 +423,36 @@ class CRM_Core_Payment_Square_RecurringInstallmentTest extends CRM_Core_Payment_
     $this->assertCount(1, $this->processor->repeatCalls, 'Only the failed attempt was created; the payment completed it.');
     $this->assertSame('Completed', $this->processor->contributions[$failed['id']]['status']);
     $this->assertSame(self::SECOND['payment_id'], $this->processor->contributions[$failed['id']]['trxn_id']);
+  }
+
+  /**
+   * A failure of the first invoice delivered after it was paid creates nothing.
+   *
+   * Square does not deliver webhooks in order, and retries a failed charge.
+   * The checkout's contribution carries CiviCRM's invoice ID, not Square's,
+   * so only Square's current invoice status shows the failure is stale.
+   */
+  public function testDelayedFailureOfAPaidFirstInstallmentCreatesNothing(): void {
+    $this->payFirstInstallment();
+
+    $this->deliver($this->invoiceScheduledChargeFailedEvent(self::FIRST));
+
+    $this->assertCount(1, $this->seriesContributions());
+    $this->assertSame([], $this->processor->repeatCalls);
+    $this->assertSame('Completed', $this->processor->contributions[self::SIGNUP_CONTRIBUTION_ID]['status']);
+  }
+
+  /**
+   * A failure of a later invoice delivered after it was paid leaves it Completed.
+   */
+  public function testDelayedFailureOfAPaidLaterInstallmentLeavesItCompleted(): void {
+    $this->payFirstInstallment();
+    $this->squareBills(self::SECOND);
+    $this->deliver($this->invoicePaymentMadeEvent(self::SECOND));
+
+    $this->deliver($this->invoiceScheduledChargeFailedEvent(self::SECOND));
+
+    $this->assertSame(['Completed', 'Completed'], array_column($this->seriesContributions(), 'status'));
   }
 
   /**

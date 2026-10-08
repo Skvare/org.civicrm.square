@@ -3,7 +3,10 @@
 use PHPUnit\Framework\TestCase;
 
 /**
- * Upgrade step 1001: one contact per Square customer, per payment processor.
+ * Upgrade steps 1001 and 1002.
+ *
+ * One contact per Square customer, per payment processor; and deleting a
+ * processor deletes its mappings.
  */
 class CRM_Square_UpgraderTest extends TestCase {
 
@@ -47,6 +50,14 @@ class CRM_Square_UpgraderTest extends TestCase {
     $this->assertFalse($upgrader->keyAdded);
   }
 
+  public function testProcessorDeletesCascadeToMappings(): void {
+    $upgrader = $this->upgrader(TRUE, []);
+
+    $this->assertTrue($upgrader->upgrade_1002());
+
+    $this->assertTrue($upgrader->cascadeAdded);
+  }
+
   /**
    * An upgrader whose square_customer_map is described by its arguments.
    *
@@ -67,6 +78,11 @@ class CRM_Square_UpgraderTest extends TestCase {
        * @var bool
        */
       public bool $conflictsChecked = FALSE;
+
+      /**
+       * @var bool
+       */
+      public bool $cascadeAdded = FALSE;
 
       /**
        * @var bool
@@ -107,6 +123,13 @@ class CRM_Square_UpgraderTest extends TestCase {
        */
       protected function addUniqueCustomerKey(): void {
         $this->keyAdded = TRUE;
+      }
+
+      /**
+       * Record instead of altering the table.
+       */
+      protected function cascadeProcessorDeletes(): void {
+        $this->cascadeAdded = TRUE;
       }
 
     };
