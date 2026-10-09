@@ -1,8 +1,8 @@
-# org.uschess.square
+# org.civicrm.square
 
 Square payment processor extension for CiviCRM.
 
-- **Extension key:** `org.uschess.square`
+- **Extension key:** `org.civicrm.square`
 - **Version:** 1.2.0 (beta)
 - **CiviCRM compatibility:** 6.16+
 - **License:** AGPL-3.0-or-later
@@ -153,7 +153,7 @@ Back-office (staff-entered) card payments are not supported.
 
 Key globals:
 - `CRM.squarePayment` — Square's namespaced integration state
-- `CRM.vars.orgUschessSquare` — processor settings (Application ID, Location ID, sandbox flag)
+- `CRM.vars.orgCivicrmSquare` — processor settings (Application ID, Location ID, sandbox flag)
 - `window.civicrmSquareHandleReload` — reinitializes the card element when the billing block is replaced via AJAX
 
 The card element mounts into `#square-card-container`. Tokenization happens on form submit; the resulting nonce is written to a hidden `square_payment_token` field for PHP to read. The billing details on the form (name, email, address), amount and currency are passed to `card.tokenize()` as Square's verification details, so Square performs buyer verification (Strong Customer Authentication) as part of tokenizing — with intent `CHARGE` for a one-time payment and `STORE` for a recurring one, whose card Square's subscription charges.

@@ -46,8 +46,8 @@ be present on the site.
 
 ```bash
 cd /path/to/buildkit/site
-CIVICRM_UF=UnitTests /path/to/org.uschess.square/vendor/bin/phpunit \
-  --configuration /path/to/org.uschess.square/tests/phpunit-headless/phpunit.xml.dist
+CIVICRM_UF=UnitTests /path/to/org.civicrm.square/vendor/bin/phpunit \
+  --configuration /path/to/org.civicrm.square/tests/phpunit-headless/phpunit.xml.dist
 ```
 
 Not yet covered: automated tests of `js/square.js` and browser tests of the
@@ -62,8 +62,8 @@ release from a clean export with only the runtime dependencies:
 
 ```bash
 mkdir -p /tmp/release
-git archive --format=tar --prefix=org.uschess.square/ HEAD | tar -x -C /tmp/release
-cd /tmp/release/org.uschess.square
+git archive --format=tar --prefix=org.civicrm.square/ HEAD | tar -x -C /tmp/release
+cd /tmp/release/org.civicrm.square
 composer install --no-dev --optimize-autoloader
 rm -rf tests .github phpcs.xml.dist phpstan.neon.dist phpstan-baseline.neon
 ```

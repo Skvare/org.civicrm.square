@@ -2,7 +2,7 @@
 
 /**
  * @file
- * Extension bootstrap and CiviCRM hook implementations for org.uschess.square.
+ * Extension bootstrap and CiviCRM hook implementations for org.civicrm.square.
  */
 
 declare(strict_types=1);

@@ -5,7 +5,7 @@
 
   Color (named hex):
     --ink       #211f19  primary text, warm near-black
-    --paper     #f6f1e5  ground, warm parchment (chess board light square)
+    --paper     #f6f1e5  ground, warm parchment
     --line      #d9cfba  hairline borders / rules
     --accent    #1e6f54  verdigris green — payments/reconciliation, distinct from Square's own brand green
     --gold      #a2761f  sparing highlight (beta/license badge only)
@@ -325,9 +325,9 @@
 
   <main>
     <header class="masthead">
-      <p class="eyebrow">CiviCRM extension &middot; org.uschess.square</p>
+      <p class="eyebrow">CiviCRM extension &middot; org.civicrm.square</p>
       <h1 class="title">Square Payment Processor</h1>
-      <p class="tagline">Lets US Chess Federation's CiviCRM take one-time and recurring dues, entry fees, and donations through Square — card data tokenizes in the browser and never touches the CiviCRM server.</p>
+      <p class="tagline">CiviCRM take one-time and recurring dues, entry fees, and donations through Square — card data tokenizes in the browser and never touches the CiviCRM server.</p>
       <div class="badges">
         <span class="badge accent">v1.2.0 &middot; beta</span>
         <span class="badge">CiviCRM 6.16+</span>
@@ -340,9 +340,9 @@
     <section id="overview">
       <p class="kicker">Overview</p>
       <h2 class="section-title">What this extension does</h2>
-      <p class="lede">org.uschess.square registers Square as a CiviCRM payment processor type — the same role Stripe or PayPal extensions play — so contribution pages, event registration, and Drupal webforms can charge a Square-issued card without CiviCRM ever seeing the card number.</p>
-      <p>It depends on two core CiviCRM extensions, <code>mjwshared</code> and <code>civi_contribute</code>, and is built against CiviCRM 6.16 or later. Composer dependencies ship committed in <code>vendor/</code>, so installing it is a normal extension enable — no build step. It is maintained by US Chess Federation and developed by Skvare, distributed under AGPL-3.0-or-later.</p>
-      <div class="callout"><strong>Why it exists:</strong> US Chess needed dues, tournament entry, and donation payments to run through Square rather than the processors CiviCRM ships with out of the box, with the same card-on-file and recurring-billing experience members already expect from CiviCRM's native processors.</div>
+      <p class="lede">org.civicrm.square registers Square as a CiviCRM payment processor type — the same role Stripe or PayPal extensions play — so contribution pages, event registration, and Drupal webforms can charge a Square-issued card without CiviCRM ever seeing the card number.</p>
+      <p>It depends on two core CiviCRM extensions, <code>mjwshared</code> and <code>civi_contribute</code>, and is built against CiviCRM 6.16 or later. Composer dependencies ship committed in <code>vendor/</code>, so installing it is a normal extension enable — no build step. It is developed and maintained by Skvare, distributed under AGPL-3.0-or-later.</p>
+      <div class="callout"><strong>Why it exists:</strong> Needed dues, tournament entry, and donation payments to run through Square rather than the processors CiviCRM ships with out of the box, with the same card-on-file and recurring-billing experience members already expect from CiviCRM's native processors.</div>
     </section>
 
     <section id="how-it-works">
@@ -590,8 +590,8 @@ xml/Menu/<span class="path">square.xml</span>            <span class="note">civi
     </section>
 
     <footer>
-      <span>org.uschess.square &middot; maintained by US Chess Federation &middot; AGPL-3.0-or-later</span>
-      <span><a href="https://github.com/Skvare/org.uschess.square">github.com/Skvare/org.uschess.square</a></span>
+      <span>org.civicrm.square &middot; maintained by Skvare &middot; AGPL-3.0-or-later</span>
+      <span><a href="https://github.com/Skvare/org.civicrm.square">github.com/Skvare/org.civicrm.square</a></span>
     </footer>
   </main>
 </div>

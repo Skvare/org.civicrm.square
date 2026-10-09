@@ -349,7 +349,7 @@
       },
 
       getConfig: function() {
-        var cfg = (typeof CRM.vars !== 'undefined' && CRM.vars.orgUschessSquare) || {};
+        var cfg = (typeof CRM.vars !== 'undefined' && CRM.vars.orgCivicrmSquare) || {};
         return {
           appId:       cfg.applicationId || window.squareApplicationId || '',
           locationId:  cfg.locationId    || window.squareLocationId    || '',
@@ -585,7 +585,7 @@
           containerEl.innerHTML = '';
         }
         if (typeof CRM.vars !== 'undefined') {
-          delete CRM.vars.orgUschessSquare;
+          delete CRM.vars.orgCivicrmSquare;
         }
         if (CRM.squarePayment.submitButtons) {
           $(CRM.squarePayment.submitButtons).show();
@@ -597,8 +597,8 @@
           script.debugging('init already in progress, skipping');
           return;
         }
-        if (typeof CRM.vars === 'undefined' || typeof CRM.vars.orgUschessSquare === 'undefined') {
-          script.debugging('CRM.vars.orgUschessSquare not defined');
+        if (typeof CRM.vars === 'undefined' || typeof CRM.vars.orgCivicrmSquare === 'undefined') {
+          script.debugging('CRM.vars.orgCivicrmSquare not defined');
           return;
         }
         var cfg = script.getConfig();
@@ -669,7 +669,7 @@
         }
 
         function submitButtonClick(clickEvent) {
-          if (typeof CRM.vars === 'undefined' || typeof CRM.vars.orgUschessSquare === 'undefined') {
+          if (typeof CRM.vars === 'undefined' || typeof CRM.vars.orgCivicrmSquare === 'undefined') {
             return CRM.squarePayment.doStandardFormSubmit();
           }
           CRM.squarePayment.form.dataset.submitdontprocess = 'false';
@@ -729,7 +729,7 @@
         if (!CRM.squarePayment.validateForm()) return false;
         if (!CRM.squarePayment.validateReCaptcha()) return false;
 
-        if (typeof CRM.vars === 'undefined' || typeof CRM.vars.orgUschessSquare === 'undefined') {
+        if (typeof CRM.vars === 'undefined' || typeof CRM.vars.orgCivicrmSquare === 'undefined') {
           script.debugging('not a Square processor, submitting normally');
           return CRM.squarePayment.doStandardFormSubmit();
         }
@@ -942,4 +942,4 @@
       }
     };
 
-  }(CRM.$, CRM.ts('org.uschess.square')));
+  }(CRM.$, CRM.ts('org.civicrm.square')));

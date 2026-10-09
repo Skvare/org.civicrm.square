@@ -9,14 +9,14 @@ return [
   [
     'name'   => 'SquarePaymentProcessor',
     'entity' => 'payment_processor_type',
-    'module' => 'org.uschess.square',
+    'module' => 'org.civicrm.square',
     'update' => 'always',
     'cleanup' => 'never',
     'params' => [
       'version'     => 3,
       'title'       => 'Square',
       'name'        => 'Square',
-      'description' => 'Square payment processor for US Chess',
+      'description' => 'Square payment processor for CiviCRM',
 
       // Public payment-processor class in CRM/Core/Payment/Square.php.
       'class_name'  => 'Payment_Square',

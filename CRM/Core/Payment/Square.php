@@ -141,8 +141,8 @@ class CRM_Core_Payment_Square extends CRM_Core_Payment {
       'weight' => 100,
     ]);
 
-    // Publish settings to CRM.vars.orgUschessSquare (works for normal page load).
-    CRM_Core_Resources::singleton()->addSetting(['orgUschessSquare' => $jsVars]);
+    // Publish settings to CRM.vars.orgCivicrmSquare (works for normal page load).
+    CRM_Core_Resources::singleton()->addSetting(['orgCivicrmSquare' => $jsVars]);
 
     // Pass vars to Smarty so the template can emit an inline <script> fallback
     // for Drupal webforms where addSetting() responses may not be processed.

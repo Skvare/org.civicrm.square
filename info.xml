@@ -1,20 +1,20 @@
 <?xml version="1.0"?>
-<extension key="org.uschess.square" type="module">
+<extension key="org.civicrm.square" type="module">
   <file>square</file>
   <name>Square Payment Processor</name>
   <description>Integration with Square for payment processing</description>
   <license>AGPL-3.0-or-later</license>
   <maintainer>
     <author>
-      <name>US Chess Federation</name>
-      <email>emanuel.london@uschess.org</email>
+      <name>Skvare</name>
+      <email>info@skvare.com</email>
       <role>Maintainer</role>
     </author>
   </maintainer>
   <urls>
-    <url desc="Main Extension Page">https://github.com/Skvare/org.uschess.square</url>
-    <url desc="Documentation">https://github.com/Skvare/org.uschess.square#readme</url>
-    <url desc="Support">https://github.com/Skvare/org.uschess.square/issues</url>
+    <url desc="Main Extension Page">https://github.com/Skvare/org.civicrm.square</url>
+    <url desc="Documentation">https://github.com/Skvare/org.civicrm.square#readme</url>
+    <url desc="Support">https://github.com/Skvare/org.civicrm.square/issues</url>
     <url desc="Licensing">http://www.gnu.org/licenses/agpl-3.0.html</url>
   </urls>
   <releaseDate>2026-10-08</releaseDate>

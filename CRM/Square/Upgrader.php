@@ -5,7 +5,7 @@ use Civi\Api4\CustomGroup;
 use Civi\Api4\PaymentProcessor;
 
 /**
- * Collection of upgrade steps for org.uschess.square.
+ * Collection of upgrade steps for org.civicrm.square.
  */
 class CRM_Square_Upgrader extends CRM_Extension_Upgrader_Base {
 

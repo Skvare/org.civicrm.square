@@ -1,4 +1,4 @@
-{crmScope extensionKey='org.uschess.square'}
+{crmScope extensionKey='org.civicrm.square'}
 <div class="crm-block crm-form-block crm-square-settings-form-block">
   <table class="form-layout">
     <tr class="crm-square-settings-form-block-debug_logging">

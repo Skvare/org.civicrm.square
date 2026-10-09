@@ -1,9 +1,9 @@
 <?php return array(
     'root' => array(
-        'name' => 'uschess/org.uschess.square',
+        'name' => 'skvare/org.civicrm.square',
         'pretty_version' => 'dev-main',
         'version' => 'dev-main',
-        'reference' => '3b5aaf2e58936718179cde8e01046c62d8e18279',
+        'reference' => '86940cf16a6c5b4d4428f1df491253d65a2ee7e7',
         'type' => 'civicrm-extension',
         'install_path' => __DIR__ . '/../../',
         'aliases' => array(),
@@ -424,6 +424,15 @@
             'aliases' => array(),
             'dev_requirement' => true,
         ),
+        'skvare/org.civicrm.square' => array(
+            'pretty_version' => 'dev-main',
+            'version' => 'dev-main',
+            'reference' => '86940cf16a6c5b4d4428f1df491253d65a2ee7e7',
+            'type' => 'civicrm-extension',
+            'install_path' => __DIR__ . '/../../',
+            'aliases' => array(),
+            'dev_requirement' => false,
+        ),
         'slevomat/coding-standard' => array(
             'pretty_version' => '8.22.1',
             'version' => '8.22.1.0',
@@ -513,15 +522,6 @@
             'install_path' => __DIR__ . '/../theseer/tokenizer',
             'aliases' => array(),
             'dev_requirement' => true,
-        ),
-        'uschess/org.uschess.square' => array(
-            'pretty_version' => 'dev-main',
-            'version' => 'dev-main',
-            'reference' => '3b5aaf2e58936718179cde8e01046c62d8e18279',
-            'type' => 'civicrm-extension',
-            'install_path' => __DIR__ . '/../../',
-            'aliases' => array(),
-            'dev_requirement' => false,
         ),
     ),
 );

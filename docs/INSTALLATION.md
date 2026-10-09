@@ -13,7 +13,7 @@ does not require `composer install`.
 ## Install
 
 1. Place the extension in CiviCRM's extension directory using the key
-   `org.uschess.square`.
+   `org.civicrm.square`.
 2. Enable **Square Payment Processor** at **Administer → System Settings →
    Extensions**.
 3. Create a **Square** payment processor at **Administer → System Settings →

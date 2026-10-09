@@ -14,9 +14,9 @@
 <script type="text/javascript">
   window.CRM = window.CRM || {ldelim}{rdelim};
   CRM.vars = CRM.vars || {ldelim}{rdelim};
-  CRM.vars.orgUschessSquare = {$squareJSVarsJson nofilter};
+  CRM.vars.orgCivicrmSquare = {$squareJSVarsJson nofilter};
 </script>
-{crmScope extensionKey='org.uschess.square'}
+{crmScope extensionKey='org.civicrm.square'}
 <div id="crm-payment-js-billing-form-container" class="square-payment-container">
   <div id="square-card-container" style="display:none;"></div>
   <div id="square-card-errors" role="alert" class="crm-error messages error" style="display:none;"></div>

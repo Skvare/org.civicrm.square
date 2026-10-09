@@ -1,8 +1,8 @@
 {
-  "name": "uschess/org.uschess.square",
-  "description": "Square payment processor integration for US Chess",
+  "name": "skvare/org.civicrm.square",
+  "description": "Square payment processor integration for CiviCRM",
   "type": "civicrm-extension",
-  "homepage": "https://github.com/Skvare/org.uschess.square",
+  "homepage": "https://github.com/Skvare/org.civicrm.square",
   "extra": {
     "civicrm": {
       "type": "payment"
@@ -20,13 +20,13 @@
   },
   "authors": [
     {
-      "name": "US Chess Federation",
-      "email": "emanuel.london@uschess.org"
+      "name": "Skvare",
+      "email": "info@skvare.com"
     }
   ],
   "support": {
-    "issues": "https://github.com/Skvare/org.uschess.square/issues",
-    "source": "https://github.com/Skvare/org.uschess.square"
+    "issues": "https://github.com/Skvare/org.civicrm.square/issues",
+    "source": "https://github.com/Skvare/org.civicrm.square"
   },
   "require": {
     "php": ">=8.2",

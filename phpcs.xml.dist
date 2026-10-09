@@ -1,6 +1,6 @@
 <?xml version="1.0"?>
-<ruleset name="org.uschess.square">
-  <description>Coding standard for the org.uschess.square CiviCRM extension.
+<ruleset name="org.civicrm.square">
+  <description>Coding standard for the org.civicrm.square CiviCRM extension.
   Uses the Drupal coding standard (drupal/coder) since this extension follows
   civix/CiviCRM's 2-space-indented, Drupal-derived style throughout -- PSR-12
   would flag that entire style as non-conformant since it mandates 4-space
