@@ -413,8 +413,9 @@
        * Square performs the verification while tokenizing, and the token
        * carries it: nothing more is sent to CiviCRM. A recurring checkout only
        * stores the card (Square's subscription charges it), so its intent is
-       * STORE. So does a card update, which has no amount: Square takes none
-       * for STORE.
+       * STORE, as is a card update's. Square refuses an amount or currency for
+       * STORE ("The STORE intent does not support the amount field."), even an
+       * empty one: only CHARGE has them.
        */
       getVerificationDetails: function(totalAmount) {
         var cfg = script.getConfig();
@@ -443,16 +444,14 @@
           if (countryCode && /^[A-Za-z]{2}$/.test(countryCode)) contact.countryCode = countryCode.toUpperCase();
         }
         var details = {
-          amount: Number(totalAmount || 0).toFixed(2),
           billingContact: contact,
-          currencyCode: CRM.squarePayment.getCurrency(cfg.currency),
           intent: script.isRecurring() ? 'STORE' : 'CHARGE',
           customerInitiated: true,
           sellerKeyedIn: false
         };
-        if (cfg.isCardUpdate) {
-          delete details.amount;
-          delete details.currencyCode;
+        if (details.intent === 'CHARGE') {
+          details.amount = Number(totalAmount || 0).toFixed(2);
+          details.currencyCode = CRM.squarePayment.getCurrency(cfg.currency);
         }
         return details;
       },
@@ -862,6 +861,8 @@
           CRM.squarePayment.form.submit();
         }
         catch(e) {
+          // Logged whatever the debug setting: otherwise nothing says what failed.
+          console.error('Square card payment failed', e);
           CRM.squarePayment.displayError(ts('Unexpected error processing your card. Please try again.'), true);
           CRM.squarePayment.form.dataset.submitted = 'false';
           return false;
