@@ -4,7 +4,7 @@ Square payment processor extension for CiviCRM.
 
 - **Extension key:** `org.civicrm.square`
 - **Version:** 1.2.0 (beta)
-- **CiviCRM compatibility:** 6.16+
+- **CiviCRM compatibility:** 6.10+
 - **License:** AGPL-3.0-or-later
 - **Square API version:** 2025-10-16 (sent by the bundled `square/square` 43.2 SDK)
 - **Requires:** `mjwshared`, `civi_contribute` (see `info.xml`)
@@ -14,8 +14,9 @@ Square payment processor extension for CiviCRM.
 ## Installation
 
 This extension ships its `vendor/` directory (and `composer.lock`) committed to the
-repository, so no `composer install` step is required after cloning/downloading —
-just enable the extension as usual (**Administer → System Settings → Extensions**).
+repository, with only its runtime dependencies, so no `composer install` step is
+required after cloning/downloading — just enable the extension as usual
+(**Administer → System Settings → Extensions**).
 
 ---
 
@@ -25,10 +26,11 @@ just enable the extension as usual (**Administer → System Settings → Extensi
 - Recurring contributions via Square Subscriptions API (`/v2/subscriptions`)
 - Refunds via Square Refunds API (`/v2/refunds`), recorded in CiviCRM once Square completes them
 - Subscription cancellation and amount changes synced to Square, and cancellations made in Square synced back to CiviCRM
+- Donors can replace the card a recurring contribution is charged to (CiviCRM's **Update billing details**)
 - Square Web Payments SDK for browser-side card tokenization — card details never pass through CiviCRM
 - Card form ZIP/postal code kept in step with the billing address's, so Square never sees two different ones
 - Card-on-file support through CiviCRM PaymentToken
-- Square customer creation and deduplication (by `reference_id`, then email — a customer already mapped to another contact, e.g. a family member sharing the email, is never shared)
+- Square customer creation, reusing an existing Square customer only when both its `reference_id` and its email are the contact's (and never one already mapped to another contact)
 - Buyer verification (Strong Customer Authentication) during card tokenization
 - Webhook event handling with deduplication and delivery logging
 - Supports sandbox (test) and production environments
@@ -72,6 +74,8 @@ Separate sandbox credentials are supported for test mode. The processor automati
 A CiviCRM frequency with no Square equivalent (for example every 3 weeks) can't be billed by Square, and is refused at checkout before any card is saved.
 
 Recurring payments use the Square Catalog API to create subscription plans and plan variations on demand, then create a Square Subscription linked to a card-on-file. The subscription starts immediately and Square itself charges every installment, including the first — no separate charge is made at checkout. The checkout's contribution stays Pending until Square confirms that first charge by webhook, which then completes that same contribution; each later installment becomes a new contribution (via `Contribution.repeattransaction`) completed the same way. All payments are recorded with CiviCRM's `Payment.create`, and the Square payment ID becomes the contribution's and the payment's transaction ID.
+
+A donor can replace the card a recurring contribution is charged to, e.g. one that has expired, from CiviCRM's **Update billing details** link (`civicrm/contribute/updatebilling`, which calls `updateSubscriptionBillingInfo()`). The new card is saved to the subscription's Square customer, Square charges it from the next installment, and it becomes the recurring contribution's payment token. The old card stays on file at Square.
 
 ---
 
@@ -122,16 +126,14 @@ customer/card records:
   extension-owned table keyed by `(contact_id, payment_processor_id)` —
   see [Database Tables](#database-tables) below.
 
-Earlier versions of this extension stored both as a `square_data` custom
-field group on the Contact entity. `CRM_Square_Upgrader::upgrade_1000()`
-migrates that legacy data into `square_customer_map` automatically **only**
-when exactly one live Square processor is configured (sandbox processors are
-not considered: every configured processor has one). If more than one live
-Square processor is configured, the legacy field never recorded which one a
-given value belongs to, so migration is skipped for that data (never
-guessed) and it's logged via `Civi::log()->warning()` for manual
-reconciliation. The `square_data` group itself is only removed once
-nothing ambiguous remains.
+When a contact has no Square customer on a processor yet, an existing Square
+customer is reused only if its `reference_id` is the contact's ID and its email
+is the contact's primary email (compared ignoring case), and no other contact
+is mapped to it; otherwise a new one is created. Neither value alone is
+trusted: other Square products and integrations set `reference_id` to their own
+values, and family members often share one email address. Updating the
+customer's name and email at checkout is best-effort: if Square refuses, that
+is logged and the payment goes ahead.
 
 When contacts are merged, the removed contact's mappings move to the
 contact kept (`square_civicrm_merge()`); where both had a Square customer on
@@ -156,7 +158,7 @@ Key globals:
 - `CRM.vars.orgCivicrmSquare` — processor settings (Application ID, Location ID, sandbox flag)
 - `window.civicrmSquareHandleReload` — reinitializes the card element when the billing block is replaced via AJAX
 
-The card element mounts into `#square-card-container`. Tokenization happens on form submit; the resulting nonce is written to a hidden `square_payment_token` field for PHP to read. The billing details on the form (name, email, address), amount and currency are passed to `card.tokenize()` as Square's verification details, so Square performs buyer verification (Strong Customer Authentication) as part of tokenizing — with intent `CHARGE` for a one-time payment and `STORE` for a recurring one, whose card Square's subscription charges.
+The card element mounts into `#square-card-container`. Tokenization happens on form submit; the resulting nonce is written to a hidden `square_payment_token` field for PHP to read. The billing details on the form (name, email, address), amount and currency are passed to `card.tokenize()` as Square's verification details, so Square performs buyer verification (Strong Customer Authentication) as part of tokenizing — with intent `CHARGE` for a one-time payment and `STORE` for a recurring one, whose card Square's subscription charges. A card update (**Update billing details**) also uses `STORE`, with no amount.
 
 The card form's ZIP/postal code and the billing address's (`billing_postal_code-N`) are kept in step: the card form starts with the billing postal code and is updated (via `card.configure()`) whenever the donor changes it, an empty billing postal code is filled in as the donor types one in the card form, and submit is stopped with an error if the two still differ.
 
@@ -168,9 +170,8 @@ The card form's ZIP/postal code and the billing address's (`billing_postal_code-
 
 | Hook | Purpose |
 |---|---|
-| `hook_civicrm_config` | Standard civix bootstrap |
+| `hook_civicrm_config` | Standard civix bootstrap; loads the bundled Square SDK (`vendor/autoload.php`), after the site's own autoloaders |
 | `hook_civicrm_install` | Standard civix install (schema/table creation is handled separately by `CRM_Square_Upgrader`, not this hook) |
-| `hook_civicrm_uninstall` | Defensive cleanup of the legacy `square_data` custom field group, if it's still present |
 | `hook_civicrm_enable` | Enforces `billing_mode = 1` on all Square payment processor instances |
 | `hook_civicrm_managed` | Wires up `managed/PaymentProcessorType.mgd.php` (registers the Square payment processor type) |
 | `hook_civicrm_navigationMenu` | Adds "Square Settings" under Administer → System Settings |
@@ -182,6 +183,7 @@ The card form's ZIP/postal code and the billing address's (`billing_postal_code-
 | Table | Owner | Purpose |
 |---|---|---|
 | `square_customer_map` | This extension (`CRM_Square_Upgrader`) | Maps `(contact_id, payment_processor_id)` → Square customer ID; each customer maps to one contact per processor. Created on install; dropped on uninstall. |
+| `square_catalog_map` | This extension (`CRM_Square_Upgrader`) | The Square subscription plans and plan variations created for each processor, so each is created once. Created on install; dropped on uninstall. Deleting a payment processor deletes its rows. |
 | `civicrm_payment_token` | CiviCRM core | Stores Square card-on-file references (one row per card), linked from `civicrm_contribution_recur.payment_token_id`. Not owned by this extension — never dropped on uninstall. |
 | `civicrm_paymentprocessor_webhook` | mjwshared extension | Webhook queue; retains deduplication, status and retry information. Not owned by this extension. |
 
@@ -204,8 +206,9 @@ CRM/
     Reconciler.php           Webhook-driven sync into CiviCRM's ledger
     Status.php               CiviCRM option values and Square status mappings
     Currency.php             Amounts in Square's smallest currency units
+    Compat.php               Calls into CiviCRM core that differ between supported versions
     Form/Settings.php        Administer > System Settings > Square Settings (debug logging, external payment import)
-    Upgrader.php             Creates/backfills/drops the square_customer_map table (see Database Tables)
+    Upgrader.php             Creates/drops the square_customer_map and square_catalog_map tables (see Database Tables)
 js/
   square.js                  Browser-side Square Web Payments SDK integration
 managed/
@@ -216,7 +219,8 @@ templates/
   CRM/Core/Payment/Square/Card.tpl  Card container HTML injected into billing block
   CRM/Square/Form/Settings.tpl      Settings form markup
 xml/Menu/square.xml          Route: civicrm/admin/setting/square -> CRM_Square_Form_Settings
-square.php                   Extension bootstrap and hooks (config/install/uninstall/enable/managed/navigationMenu)
+square.php                   Extension bootstrap and hooks (config/install/enable/managed/navigationMenu)
+tools/composer.json          Development tools (PHPUnit, PHPCS); never shipped (see docs/DEVELOPMENT.md)
 ```
 
 ---
@@ -259,9 +263,9 @@ the CiviCRM log when reconciliation does not occur.
 | Symptom | Check |
 |---|---|
 | Webhook returns HTTP 401 | Verify the processor's Webhook Signature Key and the exact notification URL in Square. Do not trim or transform the raw request body. |
-| Webhook returns HTTP 400 | Verify Square is posting valid JSON. |
+| Webhook returns HTTP 400 | Verify Square is posting valid JSON with an `event_id`. |
 | No change after a webhook | Confirm the event type is supported, the processor ID in the URL is correct, and the queue record is not in an error state. |
-| Repeated webhook delivery | Look for a failed queue record and resolve its logged processing error; Square retries non-successful deliveries. |
+| Repeated webhook delivery | Square retries deliveries that did not succeed: check for HTTP 401 or 400 above. An event that is recorded is acknowledged even if processing it fails; resolve the queue record's logged error instead. |
 | Card field does not appear | Confirm the selected processor is Square, on-site payment collection is enabled, and browser JavaScript is loading without Content Security Policy errors. |
 | Sandbox data appears missing in live mode | Sandbox and production use different Square customers, cards, credentials, and processor configuration. |
 
@@ -272,12 +276,15 @@ responses in tickets or logs.
 
 ## Development
 
-Requirements: PHP 8.2 or later and the dependencies committed in `vendor/`.
-Run these checks from the extension root before submitting a change:
+Requirements: PHP 8.2 or later and Composer. The development tools are a
+separate Composer project in `tools/`, so the committed `vendor/` keeps only the
+runtime dependencies. Run these checks from the extension root before
+submitting a change:
 
 ```bash
-vendor/bin/phpcs --standard=phpcs.xml.dist CRM square.php settings managed tests
-vendor/bin/phpunit --configuration tests/phpunit/phpunit.xml.dist
+composer install --working-dir=tools
+tools/vendor/bin/phpcs --standard=phpcs.xml.dist CRM square.php settings managed tests
+tools/vendor/bin/phpunit --configuration tests/phpunit/phpunit.xml.dist
 ```
 
 The codebase follows CiviCRM's two-space, Drupal-derived PHP style. The local

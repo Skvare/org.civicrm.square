@@ -28,6 +28,22 @@ class CRM_Core_Payment_Square_ExternalPaymentTest extends CRM_Core_Payment_Squar
 
     $this->assertSame([], $this->processor->createCalls);
     $this->assertSame([], $this->processor->payments);
+    $this->assertSame([], $this->errorsLogged(), 'Routine: nothing for anyone to do.');
+  }
+
+  /**
+   * A CiviCRM checkout took it, but has no contribution for it.
+   *
+   * E.g. an event registration whose charge Square did not confirm.
+   */
+  public function testIgnoredPaymentFromACiviCrmCheckoutIsLoggedAsAnError(): void {
+    $this->deliver($this->externalPaymentEvent(self::LOCATION_ID, 'd41d8cd98f00b204e9800998ecf8427e'));
+
+    $this->assertSame([], $this->processor->createCalls);
+    $errors = $this->errorsLogged();
+    $this->assertCount(1, $errors);
+    $this->assertStringContainsString('PAY-EXTERNAL (25.00 USD)', $errors[0]);
+    $this->assertStringContainsString('d41d8cd98f00b204e9800998ecf8427e', $errors[0]);
   }
 
   public function testPaymentAtAnotherLocationIsIgnored(): void {
@@ -51,13 +67,23 @@ class CRM_Core_Payment_Square_ExternalPaymentTest extends CRM_Core_Payment_Squar
   }
 
   /**
+   * Messages logged at level error.
+   *
+   * @return string[]
+   */
+  private function errorsLogged(): array {
+    return array_values(array_map(fn (array $log) => $log[1], array_filter(Civi::$logged, fn (array $log) => $log[0] === 'error')));
+  }
+
+  /**
    * A payment.updated for a card payment taken outside CiviCRM, two hours ago.
    *
    * @param string $locationId
+   * @param string|null $referenceId
    *
    * @return array
    */
-  private function externalPaymentEvent(string $locationId): array {
+  private function externalPaymentEvent(string $locationId, ?string $referenceId = NULL): array {
     $createdAt = gmdate('Y-m-d\TH:i:s\Z', time() - 7200);
     return [
       'type' => 'payment.updated',
@@ -73,6 +99,7 @@ class CRM_Core_Payment_Square_ExternalPaymentTest extends CRM_Core_Payment_Squar
             'location_id' => $locationId,
             'amount_money' => ['amount' => 2500, 'currency' => 'USD'],
             'buyer_email_address' => 'pat@example.org',
+            'reference_id' => $referenceId,
             'created_at' => $createdAt,
             'updated_at' => $createdAt,
           ],

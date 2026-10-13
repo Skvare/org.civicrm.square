@@ -90,17 +90,6 @@ class CRM_Core_Payment_Square_RecurringInstallmentTest extends CRM_Core_Payment_
   }
 
   /**
-   * Checkouts from before this fix stored the subscription ID as the contribution's trxn_id.
-   */
-  public function testCheckoutContributionCarryingTheSubscriptionIdIsStillCompleted(): void {
-    $this->processor->contributions[self::SIGNUP_CONTRIBUTION_ID]['trxn_id'] = self::SUBSCRIPTION_ID;
-
-    $this->payFirstInstallment();
-
-    $this->assertFirstInstallmentRecordedOnce();
-  }
-
-  /**
    * Square reports the processing fee only in a later payment.updated.
    */
   public function testProcessingFeeReportedLaterIsRecorded(): void {
@@ -235,6 +224,35 @@ class CRM_Core_Payment_Square_RecurringInstallmentTest extends CRM_Core_Payment_
 
     // The checkout finishes saving; the retry records the installment.
     $this->processor->recurs[self::RECUR_ID]['processor_id'] = self::SUBSCRIPTION_ID;
+    $this->deliver($this->paymentUpdatedEvent(self::FIRST));
+
+    $this->assertFirstInstallmentRecordedOnce();
+  }
+
+  /**
+   * Test C: an installment of a series with no contribution yet is retried.
+   *
+   * CiviCRM copies a new installment from a contribution already in the
+   * series, and a checkout that saves its contribution only after
+   * doPayment() returns may not have saved it yet.
+   */
+  public function testInstallmentBeforeTheCheckoutContributionIsSavedIsRetried(): void {
+    $this->squareBills(self::FIRST);
+    $checkout = $this->processor->contributions[self::SIGNUP_CONTRIBUTION_ID];
+    unset($this->processor->contributions[self::SIGNUP_CONTRIBUTION_ID]);
+
+    try {
+      $this->deliver($this->paymentUpdatedEvent(self::FIRST));
+      $this->fail('Expected the event to be deferred for retry.');
+    }
+    catch (CRM_Core_Payment_SquareRetryableException $e) {
+      $this->assertStringContainsString('has no contribution yet', $e->getMessage());
+    }
+    $this->assertSame([], $this->processor->repeatCalls, 'Nothing to copy an installment from.');
+    $this->assertSame([], $this->processor->payments);
+
+    // The checkout finishes saving; the retry records the installment.
+    $this->processor->contributions[self::SIGNUP_CONTRIBUTION_ID] = $checkout;
     $this->deliver($this->paymentUpdatedEvent(self::FIRST));
 
     $this->assertFirstInstallmentRecordedOnce();

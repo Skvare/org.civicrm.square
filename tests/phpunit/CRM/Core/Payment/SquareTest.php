@@ -106,6 +106,7 @@ class CRM_Core_Payment_SquareTest extends TestCase {
     }
     catch (PaymentProcessorException $e) {
       $this->assertStringContainsString('refund-1 but has not completed it yet', $e->getMessage());
+      $this->assertStringContainsString('registrations or memberships you selected for cancellation have not been cancelled', $e->getMessage(), 'Only a completed refund cancels them.');
     }
     // It was checked on, a few times, before giving up.
     $this->assertSame(5, $processor->pauses);

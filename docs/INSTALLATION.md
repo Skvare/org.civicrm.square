@@ -2,13 +2,13 @@
 
 ## Requirements
 
-- CiviCRM 6.16 or later.
+- CiviCRM 6.10 or later.
 - PHP 8.2 or later.
 - Enabled `mjwshared` and `civi_contribute` CiviCRM extensions.
 - Square sandbox credentials for initial testing.
 
-Composer dependencies are committed in `vendor/`; a standard extension install
-does not require `composer install`.
+Composer dependencies (runtime only) are committed in `vendor/`; a standard
+extension install does not require `composer install`.
 
 ## Install
 
@@ -27,11 +27,12 @@ card entry (`billing_mode = 1`).
 ## Data and upgrades
 
 New installs create `square_customer_map`, which maps a CiviCRM contact and a
-payment processor to a Square customer ID. Upgrade step `1000` migrates legacy
-`square_data.square_customer_id` records only where exactly one Square
-processor exists; values that cannot safely be attributed to an environment
-remain in place and are logged for manual review.
+payment processor to a Square customer ID, and `square_catalog_map`, which
+remembers the Square subscription plans and plan variations created for each
+processor so that each is created only once. Upgrade step `1003` creates
+`square_catalog_map` on an existing install and moves into it the plans and
+variations recorded so far, which earlier versions kept in settings.
 
 Cards are stored in CiviCRM core `PaymentToken` records, not in the extension
-table. Uninstalling removes `square_customer_map` and attempts cleanup of the
-legacy custom fields, but does not remove core payment-token or webhook data.
+tables. Uninstalling removes `square_customer_map` and `square_catalog_map`,
+but does not remove core payment-token or webhook data.

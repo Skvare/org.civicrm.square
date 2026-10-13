@@ -22,9 +22,9 @@
   <develStage>beta</develStage>
   <compatibility mode="semver">
     <comments>Semantic versioning. For example, compatibility with "6.1" implies compatibility with "6.2".</comments>
-    <ver>6.16</ver>
+    <ver>6.10</ver>
   </compatibility>
-  <comments>Square payment processor for CiviCRM 6.16 and later. Stores card-on-file references via CiviCRM's native PaymentToken entity and Square customer mappings in an extension-owned square_customer_map table (see CRM_Square_Upgrader).</comments>
+  <comments>Square payment processor for CiviCRM 6.10 and later. Stores card-on-file references via CiviCRM's native PaymentToken entity and Square customer mappings in an extension-owned square_customer_map table (see CRM_Square_Upgrader).</comments>
   <requires>
     <ext>mjwshared</ext>
     <ext>civi_contribute</ext>

@@ -136,7 +136,10 @@ class CRM_Core_Payment_SquareIPN {
    * @param array $payload
    *   Decoded JSON webhook payload.
    *
-   * @return bool TRUE on success.
+   * @return bool
+   *   TRUE once the event is recorded, whatever the outcome of processing
+   *   it (which its record holds), or if it is ignored or a duplicate.
+   *   FALSE if it cannot be recorded.
    */
   public function onReceiveWebhook(array $payload): bool {
     $eventId = $payload['event_id'] ?? NULL;
@@ -158,7 +161,7 @@ class CRM_Core_Payment_SquareIPN {
     $processorId = $this->_paymentProcessor->getID();
 
     if (!$eventId) {
-      Civi::log()->error('Square IPN: webhook event has no event_id.');
+      Civi::log('square')->error('Square IPN: webhook event has no event_id.');
       return FALSE;
     }
 
@@ -196,7 +199,10 @@ class CRM_Core_Payment_SquareIPN {
       $lock->release();
     }
 
-    return $this->processQueuedWebhookEvent($newWebhookEvent);
+    // Even if it fails: Square would redeliver it, only to be told it is a
+    // duplicate.
+    $this->processQueuedWebhookEvent($newWebhookEvent);
+    return TRUE;
   }
 
   /**
@@ -245,11 +251,11 @@ class CRM_Core_Payment_SquareIPN {
       if ($this->isWithinRetryWindow($webhookEvent)) {
         $status = 'new';
         $message = 'Will retry: ' . $e->getMessage();
-        Civi::log()->warning("Square IPN: processQueuedWebhookEvent transient failure, will retry. EventID: {$this->event_id}: " . $e->getMessage());
+        Civi::log('square')->warning("Square IPN: processQueuedWebhookEvent transient failure, will retry. EventID: {$this->event_id}: " . $e->getMessage());
       }
       else {
         $message = 'Gave up retrying: ' . $e->getMessage();
-        Civi::log()->error("Square IPN: processQueuedWebhookEvent still failing after the retry window, giving up. EventID: {$this->event_id}: " . $e->getMessage());
+        Civi::log('square')->error("Square IPN: processQueuedWebhookEvent still failing after the retry window, giving up. EventID: {$this->event_id}: " . $e->getMessage());
       }
     }
     catch (\Throwable $e) {
@@ -257,7 +263,7 @@ class CRM_Core_Payment_SquareIPN {
       // does not catch anything itself, so an escaping error would abort it
       // and leave this and every later row stuck in 'processing'.
       $message = $e->getMessage() . "\n" . $e->getTraceAsString();
-      Civi::log()->error("Square IPN: processQueuedWebhookEvent failed. EventID: {$this->event_id}: " . $e->getMessage());
+      Civi::log('square')->error("Square IPN: processQueuedWebhookEvent failed. EventID: {$this->event_id}: " . $e->getMessage());
     }
 
     $values = [

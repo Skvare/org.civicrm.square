@@ -1,0 +1,10 @@
+# Left out of release archives (e.g. GitHub's tag zip, which sites install
+# from): only what the extension runs needs to be under a site's web root.
+/.editorconfig export-ignore
+/.gitattributes export-ignore
+/.github export-ignore
+/.gitignore export-ignore
+/phpcs.xml.dist export-ignore
+/phpstan* export-ignore
+/tests export-ignore
+/tools export-ignore

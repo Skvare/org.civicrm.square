@@ -23,16 +23,21 @@ jobs:
           php-version: ${{ matrix.php }}
           coverage: none
       - name: Validate composer.json and composer.lock
-        run: composer validate --strict
+        run: |
+          composer validate --strict
+          composer validate --strict --working-dir=tools
       - name: Lint
         run: find CRM settings managed tests square.php -name '*.php' -print0 | xargs -0 -n1 php -l
-      # PHPUnit is in the committed vendor/. Deprecations, notices and
-      # warnings fail the run (see tests/phpunit/phpunit.xml.dist).
+      # PHPUnit and PHPCS live in tools/, never in the shipped vendor/.
+      - name: Install development tools
+        run: composer install --working-dir=tools --no-interaction --no-progress
+      # Deprecations, notices and warnings fail the run (see
+      # tests/phpunit/phpunit.xml.dist).
       - name: Unit tests
-        run: vendor/bin/phpunit --configuration tests/phpunit/phpunit.xml.dist
+        run: tools/vendor/bin/phpunit --configuration tests/phpunit/phpunit.xml.dist
 
-  standards:
-    name: Coding standard and static analysis
+  vendor:
+    name: Shipped vendor/
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -40,14 +45,129 @@ jobs:
         with:
           php-version: '8.2'
           coverage: none
-          tools: phpstan:1.12.32
+      # Sites install the GitHub tag zip, committed vendor/ and all.
+      - name: Only runtime packages, autoloaded after the site's own
+        run: |
+          php -r '$installed = json_decode(file_get_contents("vendor/composer/installed.json"), TRUE);
+            if (!empty($installed["dev-package-names"])) {
+              fwrite(STDERR, "vendor/ has development packages: " . implode(", ", $installed["dev-package-names"]) . "\n");
+              exit(1);
+            }'
+          if ! grep -q 'register(false)' vendor/composer/autoload_real.php; then
+            echo 'vendor/ prepends its autoloader: see prepend-autoloader in composer.json.' >&2
+            exit 1
+          fi
+      - name: Matches composer.lock
+        run: |
+          composer install --dry-run --no-interaction 2>&1 | tee "$RUNNER_TEMP/composer.out"
+          grep -q 'Nothing to install, update or remove' "$RUNNER_TEMP/composer.out"
+
+  # tests/phpunit-headless against a throwaway CiviCRM Standalone site. Not
+  # on 6.10: its public release (6.10.2) fails to install with cv.
+  headless:
+    name: Headless tests (CiviCRM 6.16.5)
+    runs-on: ubuntu-latest
+    services:
+      mysql:
+        image: mysql:8.0
+        env:
+          MYSQL_ROOT_PASSWORD: root
+          MYSQL_DATABASE: civicrm
+        ports: ['3306:3306']
+        options: >-
+          --health-cmd="mysqladmin ping"
+          --health-interval=5s
+          --health-timeout=5s
+          --health-retries=30
+    env:
+      CIVICRM_VERSION: '6.16.5'
+      MJWSHARED_VERSION: '1.5.6'
+      CV_VERSION: '0.3.72'
+      DB: mysql://root:root@127.0.0.1:3306
+    steps:
+      - uses: actions/checkout@v4
+      - uses: shivammathur/setup-php@v2
+        with:
+          php-version: '8.2'
+          coverage: none
+          extensions: bcmath, gd, intl, mysqli, pdo_mysql, soap, zip
+      - name: Install development tools
+        run: composer install --working-dir=tools --no-interaction --no-progress
+      - name: Install cv
+        run: |
+          curl -sSfL -o "$RUNNER_TEMP/cv" "https://github.com/civicrm/cv/releases/download/v${CV_VERSION}/cv-${CV_VERSION}.phar"
+          sudo install -m 0755 "$RUNNER_TEMP/cv" /usr/local/bin/cv
+      - name: Build the site, with mjwshared and this extension
+        run: |
+          curl -sSfL "https://download.civicrm.org/civicrm-${CIVICRM_VERSION}-standalone.tar.gz" | tar -xz -C "$RUNNER_TEMP"
+          SITE="$RUNNER_TEMP/civicrm-standalone"
+          mkdir "$SITE/ext/mjwshared"
+          curl -sSfL "https://lab.civicrm.org/extensions/mjwshared/-/archive/${MJWSHARED_VERSION}/mjwshared-${MJWSHARED_VERSION}.tar.gz" \
+            | tar -xz -C "$SITE/ext/mjwshared" --strip-components=1
+          cp -R "$GITHUB_WORKSPACE" "$SITE/ext/org.civicrm.square"
+          echo "SITE=$SITE" >> "$GITHUB_ENV"
+      - name: Install CiviCRM
+        working-directory: ${{ env.SITE }}
+        run: cv core:install --url=http://localhost --db="$DB/civicrm" -n
+      # Civi\Test's listener boots the test database before resetting it, so
+      # it needs CiviCRM's schema already, as on a buildkit site.
+      - name: Create the test database
+        working-directory: ${{ env.SITE }}
+        run: |
+          mysql -h 127.0.0.1 -uroot -proot -e 'CREATE DATABASE civicrm_test'
+          mysqldump -h 127.0.0.1 -uroot -proot --single-transaction civicrm | mysql -h 127.0.0.1 -uroot -proot civicrm_test
+          cv vars:fill -n > /dev/null
+          php -r '$file = getenv("HOME") . "/.cv.json";
+            $cv = json_decode(file_get_contents($file), TRUE);
+            foreach ($cv["sites"] as &$site) {
+              $site["TEST_DB_DSN"] = getenv("DB") . "/civicrm_test?new_link=true";
+            }
+            file_put_contents($file, json_encode($cv, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES));'
+      - name: Headless tests
+        working-directory: ${{ env.SITE }}
+        env:
+          CIVICRM_UF: UnitTests
+        run: php ext/org.civicrm.square/tools/vendor/bin/phpunit --configuration ext/org.civicrm.square/tests/phpunit-headless/phpunit.xml.dist
+
+  standards:
+    name: Coding standard
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: shivammathur/setup-php@v2
+        with:
+          php-version: '8.2'
+          coverage: none
+      - name: Install development tools
+        run: composer install --working-dir=tools --no-interaction --no-progress
       - name: Coding standard
-        run: vendor/bin/phpcs --standard=phpcs.xml.dist CRM square.php settings managed tests
+        run: tools/vendor/bin/phpcs --standard=phpcs.xml.dist CRM square.php settings managed tests
+
+  static-analysis:
+    name: Static analysis (CiviCRM ${{ matrix.civicrm }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # The oldest supported version. Later 6.10 releases are ESR-only,
+          # with the same API.
+          - civicrm: '6.10.2'
+            config: phpstan-civicrm-6.10.neon
+          - civicrm: '6.16.5'
+            config: phpstan.neon.dist
+    steps:
+      - uses: actions/checkout@v4
+      - uses: shivammathur/setup-php@v2
+        with:
+          php-version: '8.2'
+          coverage: none
+          tools: phpstan:1.12.32
       # CiviCRM core's classes are needed for analysis only; the release
       # tarball includes the vendor/ packages its classes extend.
-      - name: Fetch CiviCRM 6.16.5
-        run: curl -sSfL https://download.civicrm.org/civicrm-6.16.5-drupal.tar.gz | tar -xz -C "$RUNNER_TEMP"
+      - name: Fetch CiviCRM ${{ matrix.civicrm }}
+        run: curl -sSfL https://download.civicrm.org/civicrm-${{ matrix.civicrm }}-drupal.tar.gz | tar -xz -C "$RUNNER_TEMP"
       - name: Static analysis
         env:
           CIVICRM_CORE: ${{ runner.temp }}/civicrm
-        run: phpstan analyse -c phpstan.neon.dist --no-progress --memory-limit=2G
+        run: phpstan analyse -c ${{ matrix.config }} --no-progress --memory-limit=2G

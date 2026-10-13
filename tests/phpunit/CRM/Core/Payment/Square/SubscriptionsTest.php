@@ -35,10 +35,12 @@ class CRM_Core_Payment_Square_SubscriptionsTest extends CRM_Core_Payment_Square_
    */
   private array $upsertKeys = [];
 
-  protected function setUp(): void {
-    parent::setUp();
-    Civi::$settings = [];
-  }
+  /**
+   * Catalog object IDs saved, by object type and key (as square_catalog_map).
+   *
+   * @var array
+   */
+  private array $catalogMap = [];
 
   /**
    * A finite recurring contribution bills exactly its installments.
@@ -93,8 +95,8 @@ class CRM_Core_Payment_Square_SubscriptionsTest extends CRM_Core_Payment_Square_
     $this->subscriptions()->getPlanVariationIdForParams($this->params());
     $firstKeys = $this->upsertKeys;
 
-    // Nothing cached, as after a failure between Square's reply and caching.
-    Civi::$settings = [];
+    // Nothing saved, as after a failure between Square's reply and saving.
+    $this->catalogMap = [];
     $this->upsertKeys = [];
     $this->subscriptions()->getPlanVariationIdForParams($this->params());
 
@@ -205,7 +207,41 @@ class CRM_Core_Payment_Square_SubscriptionsTest extends CRM_Core_Payment_Square_
     foreach ($mockSubClients as $property => $mock) {
       $client->$property = $mock;
     }
-    return new CRM_Square_Subscriptions(new CRM_Square_Gateway($this->processorConfig(), fn () => $client));
+    $gateway = new CRM_Square_Gateway($this->processorConfig(), fn () => $client);
+
+    return new class($gateway, $this->catalogMap) extends CRM_Square_Subscriptions {
+
+      /**
+       * The test's catalog map, by reference.
+       *
+       * @var array
+       */
+      private array $map;
+
+      /**
+       * @param \CRM_Square_Gateway $gateway
+       * @param array $map
+       */
+      public function __construct(CRM_Square_Gateway $gateway, array &$map) {
+        parent::__construct($gateway);
+        $this->map = &$map;
+      }
+
+      /**
+       * @return string|null
+       */
+      protected function findCatalogObjectId(string $type, string $key): ?string {
+        return $this->map[$type][$key] ?? NULL;
+      }
+
+      /**
+       * As square_catalog_map's unique key does, keep the first.
+       */
+      protected function saveCatalogObjectId(string $type, string $key, string $objectId): void {
+        $this->map[$type][$key] ??= $objectId;
+      }
+
+    };
   }
 
   /**

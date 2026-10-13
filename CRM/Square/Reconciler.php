@@ -268,49 +268,26 @@ class CRM_Square_Reconciler {
   protected function createContributionFromSquarePayment(array $payment): void {
     $paymentId = (string) $payment['id'];
     $orderID = $payment['order_id'] ?? NULL;
-    $referenceId = $payment['reference_id'] ?? NULL;
 
     if (!$this->isImportingExternalPayments()) {
-      CRM_Core_Payment_SquareDebugLogger::log("Square syncPaymentFromSquare(): payment {$paymentId} matches nothing in CiviCRM; importing Square payments made outside CiviCRM is disabled, so it is ignored.");
+      $this->logIgnoredPayment($payment, 'importing Square payments made outside CiviCRM is disabled');
       return;
     }
     $locationId = $payment['location_id'] ?? NULL;
     if ($locationId !== $this->gateway->getLocationId()) {
-      CRM_Core_Payment_SquareDebugLogger::log("Square syncPaymentFromSquare(): payment {$paymentId} was taken at location " . ($locationId ?? 'unknown') . ", not this processor's; ignored.");
+      $this->logIgnoredPayment($payment, 'it was taken at location ' . ($locationId ?? 'unknown') . ", not this processor's");
       return;
     }
     CRM_Core_Payment_SquareDebugLogger::log("Square syncPaymentFromSquare(): no existing contribution found for payment {$paymentId} (order_id={$orderID}), attempting to create a new one.");
 
-    // Payments made by versions of doRecurPayment() before the subscription
-    // billed its own first installment used the recurring contribution ID
-    // as their reference_id.
-    $contactId = NULL;
-    $refRecurContribution = NULL;
-    if ($referenceId && ctype_digit((string) $referenceId)) {
-      $refRecurContribution = ContributionRecur::get(FALSE)
-        ->addSelect('id', 'contact_id', 'financial_type_id')
-        ->addWhere('id', '=', (int) $referenceId)
-        ->addWhere('payment_processor_id', '=', $this->gateway->processorId())
-        ->addWhere('is_test', '=', $this->gateway->isTestMode())
-        ->execute()
-        ->first();
-      if ($refRecurContribution) {
-        $contactId = (int) $refRecurContribution['contact_id'];
-      }
-    }
-
-    if (!$contactId) {
-      $contactId = $this->findContactIdForPayment($payment);
-    }
-
+    $contactId = $this->findContactIdForPayment($payment);
     if (!$contactId) {
       CRM_Core_Payment_SquareDebugLogger::log("Square syncPaymentFromSquare(): cannot resolve contact for payment {$paymentId}, skipping create.");
       return;
     }
 
-    // No better mapping available (no recur template) — fall back to the
-    // Donation financial type resolved by name, never a hard-coded ID.
-    $financialTypeId = $refRecurContribution['financial_type_id'] ?? CRM_Square_Status::financialTypeId('Donation');
+    // Resolved by name, never a hard-coded ID.
+    $financialTypeId = CRM_Square_Status::financialTypeId('Donation');
     $money = $payment['amount_money'] ?? [];
     $amount = isset($money['amount']) ? CRM_Square_Currency::fromMinorUnits($money['amount'], $money['currency'] ?? NULL) : 0.0;
 
@@ -341,6 +318,36 @@ class CRM_Square_Reconciler {
       'fee_amount' => $this->sumProcessingFees($payment['processing_fee'] ?? []),
     ], FALSE);
     CRM_Core_Payment_SquareDebugLogger::log("Square syncPaymentFromSquare(): Created and completed contribution {$newContributionId} for payment {$paymentId}, contact {$contactId}.");
+  }
+
+  /**
+   * Log a completed Square payment that matches nothing and is not imported.
+   *
+   * A reference_id shaped like a CiviCRM invoice ID (see doOneTimePayment())
+   * means a CiviCRM checkout took the payment but has no contribution for
+   * it: e.g. an event registration whose charge Square did not confirm (see
+   * CRM_Core_Payment_SquareOutcomeUnknownException), which saves none.
+   * Someone has to record it, so that is an error; anything else is
+   * routine.
+   *
+   * @param array $payment
+   *   Payment object from Square webhooks.
+   * @param string $reason
+   *   Why it is not imported.
+   */
+  protected function logIgnoredPayment(array $payment, string $reason): void {
+    $paymentId = (string) $payment['id'];
+    $referenceId = (string) ($payment['reference_id'] ?? '');
+    if (preg_match('/^[0-9a-f]{32}$/', $referenceId)) {
+      $money = $payment['amount_money'] ?? [];
+      $currency = $money['currency'] ?? NULL;
+      $amount = isset($money['amount'])
+        ? number_format(CRM_Square_Currency::fromMinorUnits($money['amount'], $currency), CRM_Square_Currency::decimals($currency), '.', '') . ' ' . $currency
+        : 'unknown amount';
+      Civi::log('square')->error("Square payment {$paymentId} ({$amount}) has reference_id {$referenceId}, a CiviCRM invoice ID, but no contribution has it. It is not recorded in CiviCRM because {$reason}: record it by hand, or refund it in Square.");
+      return;
+    }
+    CRM_Core_Payment_SquareDebugLogger::log("Square syncPaymentFromSquare(): payment {$paymentId} matches nothing in CiviCRM; {$reason}, so it is ignored.");
   }
 
   /**
@@ -453,7 +460,7 @@ class CRM_Square_Reconciler {
     }
     if (count($tenders) > 1) {
       $message = "Square invoice {$invoiceId} was paid with " . count($tenders) . ' separate payments; recording split payments is not supported and needs manual reconciliation.';
-      Civi::log()->error('Square: ' . $message);
+      Civi::log('square')->error('Square: ' . $message);
       throw new CRM_Core_Exception($message);
     }
 
@@ -543,7 +550,13 @@ class CRM_Square_Reconciler {
     }
 
     $contributions = $this->getRecurContributions($recurId);
-    $contribution = $this->findInstallmentContribution($contributions, $recur, $installment);
+    // CiviCRM copies a new installment from a contribution already in the
+    // series. A checkout that saves its contribution only after
+    // doPayment() returns may not have saved it yet.
+    if (!$contributions && $this->isWithinWebhookGrace($installment['trxn_date'] ?? NULL)) {
+      throw new CRM_Core_Payment_SquareRetryableException("Recurring contribution {$recurId} has no contribution yet to record Square payment {$paymentId} against; retrying in case checkout is still saving it.");
+    }
+    $contribution = $this->findInstallmentContribution($contributions, $installment);
 
     if ($contribution === NULL) {
       // A second or later installment: nothing in CiviCRM represents it yet.
@@ -569,7 +582,7 @@ class CRM_Square_Reconciler {
     }
     elseif ($contribution['status'] !== 'Pending') {
       $message = "Contribution {$contribution['id']} for Square payment {$paymentId} is {$contribution['status']}; the payment was not recorded and needs manual reconciliation.";
-      Civi::log()->error('Square: ' . $message);
+      Civi::log('square')->error('Square: ' . $message);
       throw new CRM_Core_Exception($message);
     }
 
@@ -610,15 +623,13 @@ class CRM_Square_Reconciler {
    *
    * @param array $contributions
    *   The series' contributions, as returned by getRecurContributions().
-   * @param array $recur
-   *   Recurring contribution, as returned by findRecurBySubscriptionId().
    * @param array $installment
    *   See recordSubscriptionInstallment().
    *
    * @return array|null
    *   NULL when the installment needs a new contribution.
    */
-  protected function findInstallmentContribution(array $contributions, array $recur, array $installment): ?array {
+  protected function findInstallmentContribution(array $contributions, array $installment): ?array {
     // Already claimed by this payment (e.g. a retry after a failure between
     // claiming and recording it).
     foreach ($contributions as $contribution) {
@@ -635,7 +646,7 @@ class CRM_Square_Reconciler {
         }
       }
     }
-    return $this->findSignupContribution($contributions, $recur);
+    return $this->findSignupContribution($contributions);
   }
 
   /**
@@ -649,27 +660,22 @@ class CRM_Square_Reconciler {
    *
    * It can only be the first installment while nothing in the series has
    * been paid, and only if the contribution is not already claimed by a
-   * different Square payment: its trxn_id is empty, or is the subscription
-   * ID that versions of doRecurPayment() before this fix returned as the
-   * checkout's trxn_id.
+   * Square payment: its trxn_id is empty.
    *
    * @param array $contributions
    *   The series' contributions, oldest first, as returned by
    *   getRecurContributions().
-   * @param array $recur
-   *   Recurring contribution, as returned by findRecurBySubscriptionId().
    *
    * @return array|null
    */
-  protected function findSignupContribution(array $contributions, array $recur): ?array {
+  protected function findSignupContribution(array $contributions): ?array {
     foreach ($contributions as $contribution) {
       if (!in_array($contribution['status'], ['Pending', 'Failed', 'Cancelled'], TRUE)) {
         return NULL;
       }
     }
     foreach ($contributions as $contribution) {
-      $trxnId = (string) ($contribution['trxn_id'] ?? '');
-      if ($contribution['status'] === 'Pending' && ($trxnId === '' || $trxnId === (string) $recur['processor_id'])) {
+      if ($contribution['status'] === 'Pending' && (string) ($contribution['trxn_id'] ?? '') === '') {
         return $contribution;
       }
     }
@@ -705,7 +711,7 @@ class CRM_Square_Reconciler {
       $expectedAmount,
       $expectedCurrency
     );
-    Civi::log()->error('Square: ' . $message);
+    Civi::log('square')->error('Square: ' . $message);
     throw new CRM_Core_Exception($message);
   }
 
@@ -737,7 +743,8 @@ class CRM_Square_Reconciler {
    * Whether a Square timestamp is recent enough that its webhook may be deferred.
    *
    * @param string|null $createdAt
-   *   ISO 8601 timestamp from Square.
+   *   ISO 8601 timestamp from Square, or a CiviCRM datetime converted from
+   *   one (see squareTimestampToCivi()).
    *
    * @return bool
    */
@@ -1308,7 +1315,7 @@ class CRM_Square_Reconciler {
     $money = $refund['amount_money'] ?? NULL;
     $refundAmount = ($money && isset($money['amount'])) ? CRM_Square_Currency::fromMinorUnits($money['amount'], $money['currency'] ?? NULL) : NULL;
     if ($refundAmount === NULL || $refundAmount <= 0) {
-      Civi::log()->error("Square syncRefundFromSquare(): refund {$refundId} for payment {$paymentId} has no usable amount, skipping.");
+      Civi::log('square')->error("Square syncRefundFromSquare(): refund {$refundId} for payment {$paymentId} has no usable amount, skipping.");
       return;
     }
 
@@ -1645,13 +1652,13 @@ class CRM_Square_Reconciler {
         }
       }
 
-      $signup = $this->findSignupContribution($contributions, $recur);
+      $signup = $this->findSignupContribution($contributions);
       if ($signup) {
         // Square could not charge the first installment. It keeps the
         // invoice open for the customer to pay, so the checkout's
         // contribution stays Pending — and is completed if Square collects
         // it later — rather than gaining a separate Failed duplicate.
-        Civi::log()->warning("Square: the first payment of recurring contribution {$recur['id']} (Square invoice {$invoiceId}) failed; contribution {$signup['id']} remains Pending.");
+        Civi::log('square')->warning("Square: the first payment of recurring contribution {$recur['id']} (Square invoice {$invoiceId}) failed; contribution {$signup['id']} remains Pending.");
         return;
       }
 

@@ -443,7 +443,7 @@
             <tr><td class="mono">CRM/Core/Payment/Square.php</td><td>Payment processor: browser assets, payments, refunds, subscriptions, notification entry point.</td></tr>
             <tr><td class="mono">CRM/Core/Payment/SquareIPN.php</td><td>Webhook filtering, signature verification, deduplication, queue persistence, processing.</td></tr>
             <tr><td class="mono">CRM/Core/Payment/SquareDebugLogger.php</td><td>Opt-in diagnostic logging, gated by a setting so it's off by default.</td></tr>
-            <tr><td class="mono">CRM/Square/Upgrader.php</td><td>Creates <code>square_customer_map</code>, migrates legacy data, drops the table on uninstall.</td></tr>
+            <tr><td class="mono">CRM/Square/Upgrader.php</td><td>Creates <code>square_customer_map</code> and <code>square_catalog_map</code>, and drops them on uninstall.</td></tr>
             <tr><td class="mono">js/square.js</td><td>Mounts the Square card element and tokenizes on submit, across native and Webform forms; keeps the card form's ZIP in step with the billing address's.</td></tr>
             <tr><td class="mono">managed/PaymentProcessorType.mgd.php</td><td>Registers "Square" as a selectable payment processor type.</td></tr>
           </tbody>
@@ -475,19 +475,20 @@ xml/Menu/<span class="path">square.xml</span>            <span class="note">civi
     <section id="storage">
       <p class="kicker">Data &amp; storage</p>
       <h2 class="section-title">Who owns what data</h2>
-      <p>The extension is deliberately thin on its own storage. It keeps exactly one table for itself — mapping a contact to a Square customer, per processor — and puts everything else into tables CiviCRM core already owns and understands.</p>
+      <p>The extension is deliberately thin on its own storage. It keeps two tables for itself — mapping a contact to a Square customer, and remembering the Square plans it created, per processor — and puts everything else into tables CiviCRM core already owns and understands.</p>
       <div class="table-wrap">
         <table>
           <thead><tr><th>Data</th><th>Table</th><th>Owner</th></tr></thead>
           <tbody>
             <tr><td>Square customer mapping</td><td class="mono">square_customer_map</td><td>This extension — created on install, dropped on uninstall</td></tr>
+            <tr><td>Square plans &amp; plan variations created</td><td class="mono">square_catalog_map</td><td>This extension — created on install, dropped on uninstall</td></tr>
             <tr><td>Card-on-file reference</td><td class="mono">civicrm_payment_token</td><td>CiviCRM core — never dropped</td></tr>
             <tr><td>Recurring contribution</td><td class="mono">civicrm_contribution_recur</td><td>CiviCRM core</td></tr>
             <tr><td>Webhook queue &amp; state</td><td class="mono">civicrm_paymentprocessor_webhook</td><td>CiviCRM core — never dropped</td></tr>
           </tbody>
         </table>
       </div>
-      <p style="margin-top:20px;">Customer mappings key on <code>(contact_id, payment_processor_id)</code>, so sandbox, production, and multiple Square merchant accounts stay separate rather than colliding on one contact field. An earlier version stored the customer ID as a Contact custom field; the upgrader migrates that data automatically only when it can be attributed to exactly one configured Square processor, and logs the rest for manual review rather than guessing.</p>
+      <p style="margin-top:20px;">Customer mappings key on <code>(contact_id, payment_processor_id)</code>, so sandbox, production, and multiple Square merchant accounts stay separate rather than colliding on one contact field.</p>
     </section>
 
     <section id="webhooks">

@@ -101,7 +101,9 @@ not the subscription, so it is matched to its invoice at Square.
   until it has the funds, which can take a while and can end in `FAILED`.
   `doRefund()` checks on it for a few seconds; one still `PENDING` is reported
   to staff as not recorded yet, and `refund.updated` records it when Square
-  completes it. Don't refund the payment again in the meantime.
+  completes it. Don't refund the payment again in the meantime. The refund
+  form cancels the event registrations and memberships selected on it only
+  for a completed refund, so cancel those by hand.
 - Refunds made in the Square Dashboard are recorded from `refund.updated` once
   completed.
 - A refund that arrives before the payment it refunds is recorded is retried

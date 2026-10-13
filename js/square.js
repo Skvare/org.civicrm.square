@@ -357,6 +357,7 @@
           processorId: cfg.id ? parseInt(cfg.id) : null,
           currency:    cfg.currency || 'USD',
           countryIsoCodes: cfg.countryIsoCodes || {},
+          isCardUpdate: !!cfg.isCardUpdate,
         };
       },
 
@@ -394,6 +395,8 @@
        * Whether this checkout sets up a recurring payment.
        */
       isRecurring: function() {
+        // A new card for an existing recurring contribution.
+        if (script.getConfig().isCardUpdate) return true;
         var form = CRM.squarePayment.form;
         if (!form) return false;
         if ($(form).find('input[name="is_recur"]:checked, input[type="hidden"][name="is_recur"][value="1"]').length) return true;
@@ -410,7 +413,8 @@
        * Square performs the verification while tokenizing, and the token
        * carries it: nothing more is sent to CiviCRM. A recurring checkout only
        * stores the card (Square's subscription charges it), so its intent is
-       * STORE.
+       * STORE. So does a card update, which has no amount: Square takes none
+       * for STORE.
        */
       getVerificationDetails: function(totalAmount) {
         var cfg = script.getConfig();
@@ -438,7 +442,7 @@
           var countryCode = typeof country === 'object' ? cfg.countryIsoCodes[country.value] : country;
           if (countryCode && /^[A-Za-z]{2}$/.test(countryCode)) contact.countryCode = countryCode.toUpperCase();
         }
-        return {
+        var details = {
           amount: Number(totalAmount || 0).toFixed(2),
           billingContact: contact,
           currencyCode: CRM.squarePayment.getCurrency(cfg.currency),
@@ -446,6 +450,11 @@
           customerInitiated: true,
           sellerKeyedIn: false
         };
+        if (cfg.isCardUpdate) {
+          delete details.amount;
+          delete details.currencyCode;
+        }
+        return details;
       },
 
       /**
@@ -787,8 +796,9 @@
           }
         }
 
+        // A card update charges nothing, but still needs the card.
         var totalAmount = CRM.squarePayment.getTotalAmount();
-        if (totalAmount === 0.0) {
+        if (totalAmount === 0.0 && !cfg.isCardUpdate) {
           script.debugging('zero amount, standard submit');
           return CRM.squarePayment.doStandardFormSubmit();
         }

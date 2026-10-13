@@ -3,133 +3,103 @@
 use PHPUnit\Framework\TestCase;
 
 /**
- * Upgrade steps 1001 and 1002.
- *
- * One contact per Square customer, per payment processor; and deleting a
- * processor deletes its mappings.
+ * Upgrade step 1003: Square catalog objects move from settings to a table.
  */
 class CRM_Square_UpgraderTest extends TestCase {
 
-  public function testConflictingMappingsStopTheUpgradeWithoutChangingTheTable(): void {
-    $upgrader = $this->upgrader(FALSE, [
-      ['payment_processor_id' => 7, 'square_customer_id' => 'CUST-A', 'contact_ids' => '12,34'],
-      ['payment_processor_id' => 9, 'square_customer_id' => 'CUST-B', 'contact_ids' => '56,78,90'],
+  public function testCatalogObjectsMoveToTheirTable(): void {
+    $upgrader = $this->upgrader([
+      ['plan', '7_live_L1_Monthly donation', 'PLAN-A'],
+      ['plan_variation', '7_live_L1_PLAN-A_MONTHLY_19_USD_indefinite', 'VAR-A'],
+      ['plan_variation', '12_test_L2_PLAN-B_ANNUAL_50_USD_6', 'VAR-B'],
     ]);
 
-    try {
-      $upgrader->upgrade_1001();
-      $this->fail('Expected the upgrade to stop.');
-    }
-    catch (CRM_Core_Exception $e) {
-      // Every conflict, and what to do about it.
-      $this->assertStringContainsString('2 Square customer(s)', $e->getMessage());
-      $this->assertStringContainsString('payment processor 7, Square customer CUST-A: contacts 12, 34', $e->getMessage());
-      $this->assertStringContainsString('payment processor 9, Square customer CUST-B: contacts 56, 78, 90', $e->getMessage());
-      $this->assertStringContainsString('delete the other contacts', $e->getMessage());
-    }
-    $this->assertFalse($upgrader->keyAdded, 'No mapping is re-assigned or dropped automatically.');
+    $this->assertTrue($upgrader->upgrade_1003());
+
+    $this->assertTrue($upgrader->tableCreated);
+    $this->assertSame([
+      [7, 'plan', '7_live_L1_Monthly donation', 'PLAN-A'],
+      [7, 'plan_variation', '7_live_L1_PLAN-A_MONTHLY_19_USD_indefinite', 'VAR-A'],
+      [12, 'plan_variation', '12_test_L2_PLAN-B_ANNUAL_50_USD_6', 'VAR-B'],
+    ], $upgrader->inserted, 'Each with the payment processor its key starts with.');
+    $this->assertTrue($upgrader->settingsDeleted);
   }
 
-  public function testKeyIsAddedWhenNoMappingsConflict(): void {
-    $upgrader = $this->upgrader(FALSE, []);
+  public function testKeyWithoutAProcessorIsSkipped(): void {
+    $upgrader = $this->upgrader([['plan', 'live_L1_Monthly donation', 'PLAN-A']]);
 
-    $this->assertTrue($upgrader->upgrade_1001());
+    $upgrader->upgrade_1003();
 
-    $this->assertTrue($upgrader->keyAdded);
-  }
-
-  public function testUpgradeIsANoOpWhenTheKeyExists(): void {
-    // E.g. installed after the key was added to the table definition.
-    $upgrader = $this->upgrader(TRUE, [
-      ['payment_processor_id' => 7, 'square_customer_id' => 'CUST-A', 'contact_ids' => '12,34'],
-    ]);
-
-    $this->assertTrue($upgrader->upgrade_1001());
-
-    $this->assertFalse($upgrader->conflictsChecked);
-    $this->assertFalse($upgrader->keyAdded);
-  }
-
-  public function testProcessorDeletesCascadeToMappings(): void {
-    $upgrader = $this->upgrader(TRUE, []);
-
-    $this->assertTrue($upgrader->upgrade_1002());
-
-    $this->assertTrue($upgrader->cascadeAdded);
+    $this->assertSame([], $upgrader->inserted);
+    $this->assertTrue($upgrader->settingsDeleted);
   }
 
   /**
-   * An upgrader whose square_customer_map is described by its arguments.
+   * An upgrader whose legacy settings hold the given catalog objects.
    *
-   * @param bool $hasKey
-   * @param array $conflicts
+   * @param array $legacyObjects
+   *   [object type, key, Square catalog object ID] triples.
    *
    * @return \CRM_Square_Upgrader
    */
-  private function upgrader(bool $hasKey, array $conflicts): CRM_Square_Upgrader {
-    return new class($hasKey, $conflicts) extends CRM_Square_Upgrader {
+  private function upgrader(array $legacyObjects): CRM_Square_Upgrader {
+    return new class($legacyObjects) extends CRM_Square_Upgrader {
 
       /**
        * @var bool
        */
-      public bool $keyAdded = FALSE;
+      public bool $tableCreated = FALSE;
+
+      /**
+       * Rows inserted, as [processor ID, type, key, object ID].
+       *
+       * @var array
+       */
+      public array $inserted = [];
 
       /**
        * @var bool
        */
-      public bool $conflictsChecked = FALSE;
-
-      /**
-       * @var bool
-       */
-      public bool $cascadeAdded = FALSE;
-
-      /**
-       * @var bool
-       */
-      private bool $hasKey;
+      public bool $settingsDeleted = FALSE;
 
       /**
        * @var array
        */
-      private array $conflicts;
+      private array $legacyObjects;
 
       /**
-       * @param bool $hasKey
-       * @param array $conflicts
+       * @param array $legacyObjects
        */
-      public function __construct(bool $hasKey, array $conflicts) {
-        $this->hasKey = $hasKey;
-        $this->conflicts = $conflicts;
+      public function __construct(array $legacyObjects) {
+        $this->legacyObjects = $legacyObjects;
       }
 
       /**
-       * @return bool
+       * Record instead of creating the table.
        */
-      protected function hasUniqueCustomerKey(): bool {
-        return $this->hasKey;
+      protected function createSquareCatalogMapTable(): void {
+        $this->tableCreated = TRUE;
       }
 
       /**
        * @return array
        */
-      protected function findConflictingCustomerMappings(): array {
-        $this->conflictsChecked = TRUE;
-        return $this->conflicts;
+      protected function getLegacyCatalogObjects(): array {
+        return $this->legacyObjects;
       }
 
       /**
-       * Record instead of altering the table.
+       * Record instead of inserting.
        */
-      protected function addUniqueCustomerKey(): void {
-        $this->keyAdded = TRUE;
+      protected function insertCatalogObject(int $processorId, string $type, string $key, string $objectId): void {
+        $this->inserted[] = [$processorId, $type, $key, $objectId];
       }
 
       /**
-       * Record instead of altering the table.
+       * Record instead of deleting.
        */
-      protected function cascadeProcessorDeletes(): void {
-        $this->cascadeAdded = TRUE;
+      protected function deleteLegacyCatalogSettings(): void {
+        $this->settingsDeleted = TRUE;
       }
 
     };

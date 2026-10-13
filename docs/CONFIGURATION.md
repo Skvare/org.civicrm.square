@@ -39,8 +39,7 @@ installments is refused, since Square cannot change it on an existing
 subscription, as is changing the amount of a recurring contribution with
 more than one line item.
 
-Upgrading to this version adds a unique key so that each Square customer maps
-to one CiviCRM contact per payment processor. If existing mappings already
-share a customer between contacts, the upgrade stops and lists them: decide
-which contact each customer belongs to, delete the other rows from
-`square_customer_map`, and run the upgrade again.
+The card a recurring contribution is charged to can be replaced from
+**Update billing details** (e.g. after the card expires): the new card is saved
+to the subscription's Square customer and Square charges it from the next
+installment.

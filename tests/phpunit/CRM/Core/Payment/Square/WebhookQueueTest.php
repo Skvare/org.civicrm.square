@@ -219,7 +219,7 @@ class CRM_Core_Payment_Square_WebhookQueueTest extends CRM_Core_Payment_Square_S
     $this->onPayment = fn () => throw $failure;
     $ipn = $this->ipn();
 
-    $this->assertFalse($this->receive($ipn, $this->event()));
+    $this->assertTrue($this->receive($ipn, $this->event()), 'Acknowledged: a redelivery would only be skipped as a duplicate.');
 
     $record = $ipn->records[1];
     $this->assertSame('error', $record['status']);

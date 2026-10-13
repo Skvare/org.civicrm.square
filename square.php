@@ -11,16 +11,13 @@ declare(strict_types=1);
 require_once 'square.civix.php';
 // phpcs:enable
 
-use Civi\Api4\CustomGroup;
-use Civi\Api4\CustomField;
-
 /**
  * Minimum PHP version this extension requires.
  *
  * Composer.json's "php" constraint only governs `composer install`; it is
  * never checked at enable/upgrade time, so a site could still enable this
- * extension on an older, unsupported PHP — CiviCRM 6.16 itself still
- * supports PHP 8.1.
+ * extension on an older, unsupported PHP — CiviCRM itself still supports
+ * PHP 8.1.
  */
 const SQUARE_MIN_PHP_VERSION = '8.2.0';
 
@@ -45,6 +42,10 @@ function _square_assert_php_version(): void {
  */
 function square_civicrm_config(\CRM_Core_Config $config): void {
   _square_civix_civicrm_config($config);
+  // The Square SDK and its dependencies. Appended to the autoloaders, not
+  // prepended (see composer.json), so the site's own copies of shared
+  // libraries such as Guzzle win.
+  require_once __DIR__ . '/vendor/autoload.php';
 }
 
 /**
@@ -53,35 +54,6 @@ function square_civicrm_config(\CRM_Core_Config $config): void {
 function square_civicrm_install(): void {
   _square_assert_php_version();
   _square_civix_civicrm_install();
-}
-
-/**
- * Implements hook_civicrm_uninstall().
- *
- * Removes the legacy square_data custom group (and its fields), if an
- * earlier version left one behind, so uninstalling the extension doesn't
- * leave orphaned schema. square_customer_map is dropped by
- * CRM_Square_Upgrader::uninstall().
- */
-function square_civicrm_uninstall(): void {
-  try {
-    $group = CustomGroup::get(FALSE)
-      ->addWhere('name', '=', 'square_data')
-      ->addSelect('id')
-      ->execute()
-      ->first();
-    if (!empty($group['id'])) {
-      CustomField::delete(FALSE)
-        ->addWhere('custom_group_id', '=', $group['id'])
-        ->execute();
-      CustomGroup::delete(FALSE)
-        ->addWhere('id', '=', $group['id'])
-        ->execute();
-    }
-  }
-  catch (CRM_Core_Exception $e) {
-    Civi::log()->error('Square extension uninstall: failed to remove square_data custom group: ' . $e->getMessage());
-  }
 }
 
 /**

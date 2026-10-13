@@ -5,10 +5,12 @@ require_once dirname(__DIR__) . '/Core/Payment/Square/SquareUnitTestCase.php';
 use Square\Customers\CustomersClient;
 use Square\Customers\Requests\CreateCustomerRequest;
 use Square\Customers\Requests\SearchCustomersRequest;
+use Square\Exceptions\SquareException;
 use Square\SquareClient;
 use Square\Types\CreateCustomerResponse;
 use Square\Types\Customer;
 use Square\Types\SearchCustomersResponse;
+use Square\Types\UpdateCustomerResponse;
 
 /**
  * Which Square customer a contact's recurring payments use.
@@ -29,6 +31,20 @@ class CRM_Square_CustomersTest extends CRM_Core_Payment_Square_SquareUnitTestCas
    */
   private array $created = [];
 
+  /**
+   * Searches made at (mocked) Square.
+   *
+   * @var \Square\Customers\Requests\SearchCustomersRequest[]
+   */
+  private array $searches = [];
+
+  /**
+   * Whether (mocked) Square refuses customer updates.
+   *
+   * @var bool
+   */
+  private bool $updateFails = FALSE;
+
   public function testMappedCustomerIsUsed(): void {
     $customers = $this->customers([12 => 'CUST-MAPPED']);
 
@@ -36,8 +52,13 @@ class CRM_Square_CustomersTest extends CRM_Core_Payment_Square_SquareUnitTestCas
     $this->assertSame([], $this->created);
   }
 
-  public function testCustomerReferencingTheContactIsAdopted(): void {
-    $this->squareCustomers[] = ['CUST-REF', '12', 'pat@example.org'];
+  /**
+   * One this extension could have created for the contact.
+   *
+   * @dataProvider sameEmailProvider
+   */
+  public function testCustomerWithTheContactsReferenceAndEmailIsAdopted(string $email): void {
+    $this->squareCustomers[] = ['CUST-REF', '12', $email];
     $customers = $this->customers([]);
 
     $this->assertSame('CUST-REF', $customers->ensureSquareCustomer(['contactID' => 12]));
@@ -45,12 +66,34 @@ class CRM_Square_CustomersTest extends CRM_Core_Payment_Square_SquareUnitTestCas
     $this->assertSame([], $this->created);
   }
 
-  public function testUnmappedCustomerWithTheContactsEmailIsAdopted(): void {
+  public static function sameEmailProvider(): array {
+    return [
+      'same email' => ['pat@example.org'],
+      'same email, other case and spacing' => [' Pat@Example.ORG'],
+    ];
+  }
+
+  /**
+   * Another integration's customer may carry the same reference_id.
+   */
+  public function testCustomerWithTheContactsReferenceButAnotherEmailIsNotAdopted(): void {
+    $this->squareCustomers[] = ['CUST-OTHER-APP', '12', 'someone.else@example.org'];
+    $customers = $this->customers([]);
+
+    $this->assertSame('CUST-NEW-1', $customers->ensureSquareCustomer(['contactID' => 12]));
+    $this->assertSame([12 => 'CUST-NEW-1'], $customers->map);
+  }
+
+  /**
+   * E.g. a parent's Square Online customer, for a child who shares the email.
+   */
+  public function testCustomerWithOnlyTheContactsEmailIsNotAdopted(): void {
     $this->squareCustomers[] = ['CUST-POS', NULL, 'pat@example.org'];
     $customers = $this->customers([]);
 
-    $this->assertSame('CUST-POS', $customers->ensureSquareCustomer(['contactID' => 12]));
-    $this->assertSame([], $this->created);
+    $this->assertSame('CUST-NEW-1', $customers->ensureSquareCustomer(['contactID' => 12]));
+    $this->assertCount(1, $this->searches);
+    $this->assertNull($this->searches[0]->getQuery()->getFilter()->getEmailAddress(), 'Customers are never looked up by email.');
   }
 
   /**
@@ -70,6 +113,21 @@ class CRM_Square_CustomersTest extends CRM_Core_Payment_Square_SquareUnitTestCas
   }
 
   /**
+   * The payment does not depend on the customer's name and email at Square.
+   */
+  public function testCustomerDetailsUpdateFailingDoesNotFailTheCheckout(): void {
+    $this->updateFails = TRUE;
+    Civi::$logged = [];
+
+    $params = ['contactID' => 12, 'email' => 'pat@example.org'];
+
+    $this->customers([12 => 'CUST-MAPPED'])->updateSquareCustomerDetails('CUST-MAPPED', $params);
+
+    $this->assertSame('warning', Civi::$logged[0][0] ?? NULL);
+    $this->assertStringContainsString('could not update the details of Square customer CUST-MAPPED', Civi::$logged[0][1]);
+  }
+
+  /**
    * Customers whose mapping lives in an array, and whose Square is mocked.
    *
    * @param array $map
@@ -81,15 +139,22 @@ class CRM_Square_CustomersTest extends CRM_Core_Payment_Square_SquareUnitTestCas
     $client = new SquareClient(token: 'test-token', options: ['baseUrl' => 'https://example.invalid']);
     $mock = $this->createMock(CustomersClient::class);
     $mock->method('search')->willReturnCallback(function (SearchCustomersRequest $request) {
+      $this->searches[] = $request;
       $filter = $request->getQuery()->getFilter();
       $matches = [];
       foreach ($this->squareCustomers as [$id, $referenceId, $email]) {
         if (($filter->getReferenceId() && $filter->getReferenceId()->getExact() === $referenceId)
           || ($filter->getEmailAddress() && $filter->getEmailAddress()->getExact() === $email)) {
-          $matches[] = new Customer(['id' => $id]);
+          $matches[] = new Customer(['id' => $id, 'referenceId' => $referenceId, 'emailAddress' => $email]);
         }
       }
       return new SearchCustomersResponse(['customers' => $matches]);
+    });
+    $mock->method('update')->willReturnCallback(function () {
+      if ($this->updateFails) {
+        throw new SquareException('connection timed out');
+      }
+      return new UpdateCustomerResponse(['customer' => new Customer(['id' => 'CUST-UPDATED'])]);
     });
     $mock->method('create')->willReturnCallback(function (CreateCustomerRequest $request) {
       $this->created[] = $request;

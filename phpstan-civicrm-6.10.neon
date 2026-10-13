@@ -1,0 +1,14 @@
+# Static analysis against CiviCRM 6.10 to 6.14, the oldest versions the
+# extension supports (see info.xml). Set CIVICRM_CORE to such a source tree,
+# then run: phpstan analyse -c phpstan-civicrm-6.10.neon
+includes:
+  - phpstan.neon.dist
+
+parameters:
+  ignoreErrors:
+    # CRM_Square_Compat passes this parameter, which CiviCRM 6.15 added,
+    # only when running on 6.15 or later.
+    -
+      message: "#^Static method CRM_Contribute_BAO_ContributionRecur\\:\\:getTemplateContribution\\(\\) invoked with 3 parameters, 1\\-2 required\\.$#"
+      count: 1
+      path: CRM/Square/Compat.php

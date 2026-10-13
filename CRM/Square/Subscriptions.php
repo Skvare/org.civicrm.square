@@ -19,9 +19,9 @@ use Square\Subscriptions\Requests\UpdateSubscriptionRequest;
 /**
  * Square subscription plans and subscriptions for one payment processor.
  *
- * Creates (and caches) the Catalog subscription plans and plan variations a
- * recurring contribution's amount and cadence need, and changes or cancels
- * existing subscriptions.
+ * Creates the Catalog subscription plans and plan variations a recurring
+ * contribution's amount and cadence need (remembered in square_catalog_map,
+ * so each is created once), and changes or cancels existing subscriptions.
  */
 class CRM_Square_Subscriptions {
 
@@ -185,10 +185,9 @@ class CRM_Square_Subscriptions {
       $currency,
       $installments ?: 'indefinite',
     ]);
-    $cache = Civi::settings()->get('org_square_plan_variation_cache') ?? [];
-
-    if (!empty($cache[$cacheKey])) {
-      return $cache[$cacheKey];
+    $savedId = $this->findCatalogObjectId('plan_variation', $cacheKey);
+    if ($savedId !== NULL) {
+      return $savedId;
     }
 
     $label = sprintf(
@@ -240,8 +239,7 @@ class CRM_Square_Subscriptions {
       throw new CRM_Core_Exception('Failed to create Square plan variation.');
     }
 
-    $cache[$cacheKey] = $variationId;
-    Civi::settings()->set('org_square_plan_variation_cache', $cache);
+    $this->saveCatalogObjectId('plan_variation', $cacheKey, $variationId);
 
     return $variationId;
   }
@@ -288,10 +286,9 @@ class CRM_Square_Subscriptions {
       $this->gateway->getLocationId(),
       $name,
     ]);
-    $cache = Civi::settings()->get('org_square_plan_cache') ?? [];
-
-    if (!empty($cache[$cacheKey])) {
-      return $cache[$cacheKey];
+    $savedId = $this->findCatalogObjectId('plan', $cacheKey);
+    if ($savedId !== NULL) {
+      return $savedId;
     }
 
     $catalogObject = CatalogObject::subscriptionPlan(new CatalogObjectSubscriptionPlan([
@@ -312,10 +309,55 @@ class CRM_Square_Subscriptions {
       throw new CRM_Core_Exception('Failed to create Square subscription plan.');
     }
 
-    $cache[$cacheKey] = $planId;
-    Civi::settings()->set('org_square_plan_cache', $cache);
+    $this->saveCatalogObjectId('plan', $cacheKey, $planId);
 
     return $planId;
+  }
+
+  /**
+   * The Square catalog object created for a key, if any (see square_catalog_map).
+   *
+   * @param string $type
+   *   Either 'plan' or 'plan_variation'.
+   * @param string $key
+   *   What it was created for (see getOrCreatePlanVariation() and
+   *   getOrCreateSubscriptionPlan()).
+   *
+   * @return string|null
+   *   Square catalog object ID.
+   */
+  protected function findCatalogObjectId(string $type, string $key): ?string {
+    $objectId = CRM_Core_DAO::singleValueQuery(
+      'SELECT square_object_id FROM square_catalog_map WHERE object_type = %1 AND object_key = %2',
+      [1 => [$type, 'String'], 2 => [$key, 'String']]
+    );
+    return $objectId ? (string) $objectId : NULL;
+  }
+
+  /**
+   * Remember the Square catalog object created for a key.
+   *
+   * Never forgotten: without it, the next payment for the same plan would
+   * create a duplicate in the Square catalog.
+   *
+   * @param string $type
+   *   Either 'plan' or 'plan_variation'.
+   * @param string $key
+   * @param string $objectId
+   *   Square catalog object ID.
+   */
+  protected function saveCatalogObjectId(string $type, string $key, string $objectId): void {
+    // A concurrent checkout may have saved it first: the idempotency key
+    // makes Square return the same object to both.
+    CRM_Core_DAO::executeQuery(
+      'INSERT IGNORE INTO square_catalog_map (payment_processor_id, object_type, object_key, square_object_id) VALUES (%1, %2, %3, %4)',
+      [
+        1 => [$this->gateway->processorId(), 'Integer'],
+        2 => [$type, 'String'],
+        3 => [$key, 'String'],
+        4 => [$objectId, 'String'],
+      ]
+    );
   }
 
   /**
@@ -337,8 +379,6 @@ class CRM_Square_Subscriptions {
    *
    * Sets the subscription's price override, which replaces the STATIC price
    * of the plan variation it was created with (see getOrCreatePlanVariation()).
-   * Square requires the subscription's current version on every update, to
-   * reject concurrent changes, so it is read immediately before.
    *
    * @param string $subscriptionId
    *   Square subscription ID.
@@ -349,21 +389,82 @@ class CRM_Square_Subscriptions {
    * @throws \CRM_Core_Exception
    */
   public function changeAmount(string $subscriptionId, float $amount, string $currency): void {
+    $this->update($subscriptionId, [
+      'priceOverrideMoney' => new Money([
+        'amount' => CRM_Square_Currency::toMinorUnits($amount, $currency),
+        'currency' => $currency,
+      ]),
+    ]);
+  }
+
+  /**
+   * Charge a Square subscription's later invoices to another card.
+   *
+   * @param string $subscriptionId
+   *   Square subscription ID.
+   * @param string $cardId
+   *   A card on file of the subscription's Square customer.
+   *
+   * @throws \CRM_Core_Exception
+   */
+  public function changeCard(string $subscriptionId, string $cardId): void {
+    $this->update($subscriptionId, ['cardId' => $cardId]);
+  }
+
+  /**
+   * The Square customer a subscription bills.
+   *
+   * @param string $subscriptionId
+   *   Square subscription ID.
+   *
+   * @return string
+   *   Square customer ID.
+   *
+   * @throws \CRM_Core_Exception
+   */
+  public function getCustomerId(string $subscriptionId): string {
+    $customerId = (string) $this->getSubscription($subscriptionId)->getCustomerId();
+    if ($customerId === '') {
+      throw new CRM_Core_Exception("Square subscription {$subscriptionId} has no customer.");
+    }
+    return $customerId;
+  }
+
+  /**
+   * A Square subscription, as Square reports it now.
+   *
+   * @param string $subscriptionId
+   *
+   * @return \Square\Types\Subscription
+   *
+   * @throws \CRM_Core_Exception
+   */
+  protected function getSubscription(string $subscriptionId): Subscription {
     $subscription = $this->gateway->call(fn (SquareClient $client) => $client->subscriptions->get(
       new GetSubscriptionsRequest(['subscriptionId' => $subscriptionId])
     ))->getSubscription();
     if (empty($subscription)) {
       throw new CRM_Core_Exception("Square subscription {$subscriptionId} not found.");
     }
+    return $subscription;
+  }
 
-    $values = [
-      'priceOverrideMoney' => new Money([
-        'amount' => CRM_Square_Currency::toMinorUnits($amount, $currency),
-        'currency' => $currency,
-      ]),
-    ];
-    if ($subscription->getVersion() !== NULL) {
-      $values['version'] = $subscription->getVersion();
+  /**
+   * Change fields of a Square subscription.
+   *
+   * Square requires the subscription's current version on every update, to
+   * reject concurrent changes, so it is read immediately before.
+   *
+   * @param string $subscriptionId
+   * @param array $values
+   *   Subscription fields to change.
+   *
+   * @throws \CRM_Core_Exception
+   */
+  protected function update(string $subscriptionId, array $values): void {
+    $version = $this->getSubscription($subscriptionId)->getVersion();
+    if ($version !== NULL) {
+      $values['version'] = $version;
     }
     $this->gateway->call(fn (SquareClient $client) => $client->subscriptions->update(new UpdateSubscriptionRequest([
       'subscriptionId' => $subscriptionId,

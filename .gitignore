@@ -1,3 +1,5 @@
 /tests/phpunit/.phpunit.result.cache*
 /tests/phpunit/.phpunit.cache/
 /.phpunit.result.cache
+# Development tools (see tools/composer.json); never shipped.
+/tools/vendor/

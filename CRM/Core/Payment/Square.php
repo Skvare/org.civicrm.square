@@ -15,7 +15,6 @@ use Square\Refunds\Requests\GetRefundsRequest;
 use Square\Refunds\Requests\RefundPaymentRequest;
 use Square\Types\PaymentRefund;
 
-require_once E::path() . '/vendor/autoload.php';
 /**
  * Square Payment Processor for CiviCRM.
  *
@@ -122,6 +121,9 @@ class CRM_Core_Payment_Square extends CRM_Core_Payment {
       // when tokenizing the card.
       'currency' => (method_exists($form, 'getCurrency') ? $form->getCurrency() : NULL) ?: 'USD',
       'countryIsoCodes' => (object) CRM_Core_PseudoConstant::countryIsoCode(),
+      // A new card for an existing recurring contribution: saved, not
+      // charged (see updateSubscriptionBillingInfo()).
+      'isCardUpdate' => $form instanceof CRM_Contribute_Form_UpdateBilling,
     ];
 
     // Add hidden field for the payment token.
@@ -837,7 +839,10 @@ class CRM_Core_Payment_Square extends CRM_Core_Payment {
 
     $status = strtoupper($refund->getStatus() ?? 'UNKNOWN');
     if ($status === 'PENDING') {
-      throw new PaymentProcessorException(E::ts('Square accepted refund %1 but has not completed it yet, so it is not recorded in CiviCRM now. It will be recorded automatically once Square completes it. Do not refund this payment again.', [1 => $refund->getId()]));
+      // So CiviCRM's refund form does not cancel the event registrations or
+      // memberships staff selected with it either: only a completed refund
+      // does that.
+      throw new PaymentProcessorException(E::ts('Square accepted refund %1 but has not completed it yet, so it is not recorded in CiviCRM now. It will be recorded automatically once Square completes it. Any event registrations or memberships you selected for cancellation have not been cancelled: cancel them by hand. Do not refund this payment again.', [1 => $refund->getId()]));
     }
     if (!in_array($status, ['COMPLETED', 'APPROVED'], TRUE)) {
       throw new PaymentProcessorException("Square refund not completed. Status: {$status}");
@@ -1060,10 +1065,110 @@ class CRM_Core_Payment_Square extends CRM_Core_Payment {
     if (!$recur) {
       return NULL;
     }
-    // Flattened: otherwise line_item is keyed by price set, one entry per set.
-    $template = CRM_Contribute_BAO_ContributionRecur::getTemplateContribution($recurId, [], TRUE);
-    $recur['line_item_count'] = count($template['line_item'] ?? []);
+    $recur['line_item_count'] = count(CRM_Square_Compat::getTemplateLineItems($recurId));
     return $recur;
+  }
+
+  /**
+   * Charge a Square subscription to a new card, from its next invoice.
+   *
+   * CiviCRM's "Update billing details" form for a recurring contribution
+   * (civicrm/contribute/updatebilling) calls this, and js/square.js
+   * tokenizes the new card there as at a recurring checkout. The card is
+   * saved to the subscription's Square customer, and becomes the recurring
+   * contribution's payment token once the subscription charges it. The old
+   * card stays on file at Square.
+   *
+   * @param string $message
+   * @param array $params
+   *   subscriptionId, contributionRecurID, square_payment_token, and the
+   *   billing name and address.
+   *
+   * @return bool
+   *
+   * @throws \Civi\Payment\Exception\PaymentProcessorException
+   */
+  public function updateSubscriptionBillingInfo(&$message = '', $params = []) {
+    $subscriptionId = (string) ($params['subscriptionId'] ?? '');
+    $recurId = (int) ($params['contributionRecurID'] ?? 0);
+    $cardNonce = CRM_Square_Customers::cardNonce($params);
+    if ($subscriptionId === '' || !$recurId || $cardNonce === NULL) {
+      throw new PaymentProcessorException(E::ts('A Square subscription and a new card are required to update the card.'));
+    }
+    $recur = $this->getRecurForCardUpdate($recurId);
+    if (!$recur || $recur['processor_id'] !== $subscriptionId) {
+      throw new PaymentProcessorException(E::ts('This recurring contribution is not linked to that Square subscription.'));
+    }
+
+    try {
+      $subscriptions = $this->subscriptions();
+      $customerId = $subscriptions->getCustomerId($subscriptionId);
+      // Not linked to the recurring contribution yet: Square might still
+      // refuse to charge the subscription to it.
+      unset($params['contributionRecurID']);
+      $cardId = $this->customers()->createCardOnFile($customerId, $cardNonce, $params, $recur['contact_id']);
+      $subscriptions->changeCard($subscriptionId, $cardId);
+    }
+    catch (PaymentProcessorException $e) {
+      // Square declined the card.
+      throw $e;
+    }
+    catch (\Throwable $e) {
+      throw new PaymentProcessorException(E::ts('Failed to update the card of the Square subscription: %1', [1 => $e->getMessage()]), 0, [], $e);
+    }
+
+    // Square charges the new card from now on, whatever happens here.
+    try {
+      $this->saveRecurCard($recurId, $cardId);
+    }
+    catch (CRM_Core_Exception $e) {
+      Civi::log('square')->error("Square: subscription {$subscriptionId} now charges card {$cardId}, but it could not be made the payment token of recurring contribution {$recurId}: " . $e->getMessage());
+    }
+    return TRUE;
+  }
+
+  /**
+   * The recurring contribution updateSubscriptionBillingInfo() is changing the card of.
+   *
+   * @param int $recurId
+   *
+   * @return array|null
+   *   processor_id and contact_id. NULL if the recurring contribution does
+   *   not belong to this processor.
+   */
+  protected function getRecurForCardUpdate(int $recurId): ?array {
+    return ContributionRecur::get(FALSE)
+      ->addSelect('processor_id', 'contact_id')
+      ->addWhere('id', '=', $recurId)
+      ->addWhere('payment_processor_id', '=', $this->processorId())
+      ->execute()
+      ->first();
+  }
+
+  /**
+   * Make a card on file a recurring contribution's payment token.
+   *
+   * @param int $recurId
+   * @param string $cardId
+   *   Square card ID, which CRM_Square_Customers::createCardOnFile() saved
+   *   as a PaymentToken of this processor.
+   *
+   * @throws \CRM_Core_Exception
+   */
+  protected function saveRecurCard(int $recurId, string $cardId): void {
+    $paymentToken = PaymentToken::get(FALSE)
+      ->addSelect('id')
+      ->addWhere('token', '=', $cardId)
+      ->addWhere('payment_processor_id', '=', $this->processorId())
+      ->execute()
+      ->first();
+    if (empty($paymentToken['id'])) {
+      throw new CRM_Core_Exception("Square card {$cardId} has no payment token.");
+    }
+    ContributionRecur::update(FALSE)
+      ->addWhere('id', '=', $recurId)
+      ->addValue('payment_token_id', $paymentToken['id'])
+      ->execute();
   }
 
   /**
@@ -1128,9 +1233,7 @@ class CRM_Core_Payment_Square extends CRM_Core_Payment {
    * @return string|null
    */
   public function getWebhookSignatureKey() {
-    if ($this->isTestMode()) {
-      return $this->_paymentProcessor['test_subject'] ?? $this->_paymentProcessor['subject'] ?? NULL;
-    }
+    // The test processor is its own row, with its own subject.
     return $this->_paymentProcessor['subject'] ?? NULL;
   }
 
@@ -1204,7 +1307,7 @@ class CRM_Core_Payment_Square extends CRM_Core_Payment {
 
     $payload = json_decode($rawData, TRUE);
     if (empty($payload)) {
-      Civi::log()->error('Square IPN: invalid JSON body received.');
+      Civi::log('square')->error('Square IPN: invalid JSON body received.');
       http_response_code(400);
       return;
     }
@@ -1214,7 +1317,10 @@ class CRM_Core_Payment_Square extends CRM_Core_Payment {
     $ipn = new CRM_Core_Payment_SquareIPN($this);
     $ipn->setData($rawData);
     if (!$ipn->onReceiveWebhook($payload)) {
-      http_response_code(500);
+      // Already logged: an event it cannot record, such as one with no
+      // event_id. Once recorded, an event that fails is acknowledged; its
+      // record holds the error.
+      http_response_code(400);
     }
   }
 
@@ -1241,7 +1347,7 @@ class CRM_Core_Payment_Square extends CRM_Core_Payment {
   protected function validateWebhookSignature(string $rawData, array $headers): bool {
     $key = $this->getWebhookSignatureKey();
     if (!$key) {
-      Civi::log()->error('Square IPN: webhook signature key not configured (check "Subject" field on payment processor).');
+      Civi::log('square')->error('Square IPN: webhook signature key not configured (check "Subject" field on payment processor).');
       return FALSE;
     }
 
@@ -1253,7 +1359,7 @@ class CRM_Core_Payment_Square extends CRM_Core_Payment {
 
     $provided = $normalised['x-square-hmacsha256-signature'] ?? NULL;
     if (!$provided) {
-      Civi::log()->error('Square IPN: X-Square-Hmacsha256-Signature header missing.');
+      Civi::log('square')->error('Square IPN: X-Square-Hmacsha256-Signature header missing.');
       return FALSE;
     }
 
@@ -1262,7 +1368,7 @@ class CRM_Core_Payment_Square extends CRM_Core_Payment {
 
     if (!hash_equals($expected, $provided)) {
       // Do not log signatures: they are credential-derived authentication data.
-      Civi::log()->error('Square IPN: signature validation failed.');
+      Civi::log('square')->error('Square IPN: signature validation failed.');
       return FALSE;
     }
 

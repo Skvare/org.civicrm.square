@@ -44,14 +44,16 @@ class CRM_Square_Customers {
   /**
    * Update a Square customer's details from CiviCRM payment parameters.
    *
+   * Best-effort: the payment does not depend on them, so if Square refuses
+   * (e.g. an email address it considers invalid) or cannot be reached, that
+   * is logged and the checkout continues.
+   *
    * @param string $customerID
    *   Square customer ID.
    * @param array $params
    *   CiviCRM payment parameters.
    *
    * @return void
-   *
-   * @throws CRM_Core_Exception
    */
   public function updateSquareCustomerDetails($customerID, $params) {
     $firstName = $params['first_name'] ?? NULL;
@@ -73,7 +75,12 @@ class CRM_Square_Customers {
       $requestValues['referenceId'] = (string) $contactID;
     }
 
-    $this->gateway->call(fn (SquareClient $client) => $client->customers->update(new UpdateCustomerRequest($requestValues)));
+    try {
+      $this->gateway->call(fn (SquareClient $client) => $client->customers->update(new UpdateCustomerRequest($requestValues)));
+    }
+    catch (CRM_Core_Exception $e) {
+      Civi::log('square')->warning("Square: could not update the details of Square customer {$customerID}: " . $e->getMessage());
+    }
   }
 
   /**
@@ -127,11 +134,13 @@ class CRM_Square_Customers {
   /**
    * Map an existing Square customer to a contact that has none for this processor.
    *
-   * Candidates are Square customers whose reference_id is the contact's ID
-   * (as this extension sets it), then those with the contact's email. A
+   * Only a Square customer this extension could have created for the
+   * contact: its reference_id is the contact's ID (as createSquareCustomer()
+   * sets it) and its email is the contact's primary email. Either alone is
+   * not enough: other Square products and integrations set reference_id to
+   * their own values, and family members often share one email address. A
    * candidate already mapped to another contact on this processor is never
-   * shared: family members often share one email address, and each gets a
-   * Square customer of their own.
+   * shared either.
    *
    * @param int $contactID
    *
@@ -142,17 +151,19 @@ class CRM_Square_Customers {
    * @throws CRM_Core_Exception
    */
   protected function adoptSquareCustomer(int $contactID): ?string {
+    $email = trim((string) ($this->getContactDetails($contactID)['email'] ?? ''));
+    if ($email === '') {
+      return NULL;
+    }
     $candidates = $this->searchSquareCustomers(new CustomerFilter([
       'referenceId' => new CustomerTextFilter(['exact' => (string) $contactID]),
     ]));
-    $email = $this->getContactDetails($contactID)['email'] ?? NULL;
-    if ($email) {
-      $candidates = array_merge($candidates, $this->searchSquareCustomers(new CustomerFilter([
-        'emailAddress' => new CustomerTextFilter(['exact' => $email]),
-      ])));
-    }
 
-    foreach (array_unique($candidates) as $candidateId) {
+    foreach ($candidates as $candidate) {
+      $candidateId = (string) $candidate->getId();
+      if ($candidateId === '' || strcasecmp(trim((string) $candidate->getEmailAddress()), $email) !== 0) {
+        continue;
+      }
       $mappedContactId = $this->getMappedContactId($candidateId);
       if ($mappedContactId !== NULL && $mappedContactId !== $contactID) {
         continue;
@@ -202,11 +213,11 @@ class CRM_Square_Customers {
   }
 
   /**
-   * IDs of the Square customers matching a filter.
+   * The Square customers matching a filter.
    *
    * @param \Square\Types\CustomerFilter $filter
    *
-   * @return string[]
+   * @return \Square\Types\Customer[]
    *
    * @throws CRM_Core_Exception
    */
@@ -214,13 +225,7 @@ class CRM_Square_Customers {
     $response = $this->gateway->call(fn (SquareClient $client) => $client->customers->search(new SearchCustomersRequest([
       'query' => new CustomerQuery(['filter' => $filter]),
     ])));
-    $ids = [];
-    foreach ($response->getCustomers() ?? [] as $customer) {
-      if ($customer->getId()) {
-        $ids[] = $customer->getId();
-      }
-    }
-    return $ids;
+    return $response->getCustomers() ?? [];
   }
 
   /**

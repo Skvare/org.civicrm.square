@@ -23,4 +23,10 @@
   <php>
     <env name="CIVICRM_UF" value="UnitTests"/>
   </php>
+  <!-- Builds each test's CiviCRM (HeadlessInterface::setUpHeadless()). -->
+  <listeners>
+    <listener class="Civi\Test\CiviTestListener">
+      <arguments/>
+    </listener>
+  </listeners>
 </phpunit>

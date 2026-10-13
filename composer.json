@@ -14,9 +14,8 @@
       "php": "8.2.0"
     },
     "sort-packages": true,
-    "allow-plugins": {
-      "dealerdirect/phpcodesniffer-composer-installer": true
-    }
+    "prepend-autoloader": false,
+    "optimize-autoloader": true
   },
   "authors": [
     {
@@ -31,10 +30,5 @@
   "require": {
     "php": ">=8.2",
     "square/square": "^43.2"
-  },
-  "require-dev": {
-    "dealerdirect/phpcodesniffer-composer-installer": "^1.0",
-    "drupal/coder": "^8.3",
-    "phpunit/phpunit": "^9.6"
   }
 }

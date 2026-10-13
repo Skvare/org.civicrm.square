@@ -7,13 +7,14 @@
 | `CRM/Core/Payment/Square.php` | CiviCRM's payment-processor adapter (`CRM_Core_Payment`): billing block, checkout payments, refunds, recurring setup, amount changes, cancellation, and the webhook entry point. Delegates to the classes below. |
 | `CRM/Square/Gateway.php` | Square API access for one processor: SDK client, credentials and environment, idempotency keys, and translation of SDK errors (transient ones as `CRM_Core_Payment_SquareRetryableException`). |
 | `CRM/Square/Customers.php` | Square customers and cards on file: `square_customer_map` and PaymentToken records. |
-| `CRM/Square/Subscriptions.php` | Catalog subscription plans and plan variations (cached per processor), and changes to or cancellation of subscriptions. |
+| `CRM/Square/Subscriptions.php` | Catalog subscription plans and plan variations (remembered per processor in `square_catalog_map`), and changes to (amount, card) or cancellation of subscriptions. |
 | `CRM/Square/Reconciler.php` | Webhook-driven sync into CiviCRM: payments, subscription installments, refunds, and recurring status. Its protected find/record methods are its only CiviCRM data access. |
 | `CRM/Square/Status.php` | CiviCRM option values by name, and Square-to-CiviCRM status mappings. |
 | `CRM/Square/Currency.php` | Conversion between CiviCRM amounts and Square's smallest currency units (cents for USD, whole yen for JPY). |
+| `CRM/Square/Compat.php` | Calls into CiviCRM core that differ between the supported versions, chosen by the running version (`CRM_Utils_System::version()`). |
 | `CRM/Core/Payment/SquareIPN.php` | Webhook filtering, deduplication, queue persistence, and processing. |
 | `CRM/Core/Payment/SquareDebugLogger.php` | Opt-in diagnostic logging. |
-| `CRM/Square/Upgrader.php` | Schema creation, migration, and cleanup. |
+| `CRM/Square/Upgrader.php` | Creates and drops the extension's tables, and its upgrade steps. |
 | `js/square.js` | Browser card element and tokenization; keeps the card form's postal code in step with the billing address's. |
 | `managed/PaymentProcessorType.mgd.php` | Payment processor type registration. |
 
@@ -61,12 +62,11 @@ the CiviCRM recurring contribution.
 | Data | Storage | Owner |
 |---|---|---|
 | Square customer mapping | `square_customer_map` | This extension |
+| Square plans and plan variations created | `square_catalog_map` | This extension |
 | Card-on-file reference | `civicrm_payment_token` | CiviCRM core |
 | Recurring contribution | `civicrm_contribution_recur` | CiviCRM core |
 | Webhook state | `civicrm_paymentprocessor_webhook` | mjwshared extension |
 
 Customer mappings use `(contact_id, payment_processor_id)`, separating
 sandbox, production, and different Square merchant accounts. Each Square
-customer maps to at most one contact per processor (`UI_processor_customer`,
-added by upgrade 1001, which stops and lists any existing conflicts rather
-than resolving them).
+customer maps to at most one contact per processor (`UI_processor_customer`).
