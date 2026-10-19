@@ -417,47 +417,7 @@ class CRM_Square_Customers {
    * @return string
    */
   protected function translateSquareCardError(array $errors) {
-    $messages = [];
-
-    foreach ($errors as $err) {
-      $code = $err->getCode() ?? '';
-      switch ($code) {
-        case 'CARD_DECLINED':
-          $messages[] = 'Your card was declined. Please use a different card.';
-          break;
-
-        case 'GENERIC_DECLINE':
-          $messages[] = 'The card was declined by the bank.';
-          break;
-
-        case 'INVALID_EXPIRATION':
-          $messages[] = 'The card expiration date is invalid.';
-          break;
-
-        case 'CVV_FAILURE':
-          $messages[] = 'The CVV security code is incorrect.';
-          break;
-
-        case 'ADDRESS_VERIFICATION_FAILURE':
-          $messages[] = 'The billing ZIP/postal code did not match the card.';
-          break;
-
-        case 'INSUFFICIENT_FUNDS':
-          $messages[] = 'The card has insufficient funds.';
-          break;
-
-        default:
-          if (!empty($err->getDetail())) {
-            $messages[] = $err->getDetail();
-          }
-          else {
-            $messages[] = 'The card could not be processed.';
-          }
-          break;
-      }
-    }
-
-    return implode(' ', $messages);
+    return $this->gateway->translateSquareCardError($errors);
   }
 
   /**

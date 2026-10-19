@@ -4,6 +4,7 @@ use Square\SquareClient;
 use Square\Exceptions\SquareApiException;
 use Square\Exceptions\SquareException;
 use Civi\Payment\Exception\PaymentProcessorException;
+use CRM_Square_ExtensionUtil as E;
 
 /**
  * Square API access for one CiviCRM Square payment processor.
@@ -196,11 +197,59 @@ class CRM_Square_Gateway {
     }
     elseif ($statusCode >= 400 && $isPaymentMethodError) {
       $exceptionClass = PaymentProcessorException::class;
+      $message = $message ?? $this->translateSquareCardError($e->getErrors());
     }
     else {
       $exceptionClass = CRM_Core_Exception::class;
     }
     return new $exceptionClass($message ?? $msg, 0, [], $e);
+  }
+
+  /**
+   * Translate Square card errors for both payments and cards on file.
+   *
+   * @param \Square\Types\Error[] $errors
+   *   Square card errors.
+   *
+   * @return string
+   */
+  public function translateSquareCardError(array $errors): string {
+    $messages = [];
+
+    foreach ($errors as $err) {
+      $code = $err->getCode() ?? '';
+      switch ($code) {
+        case 'CARD_DECLINED':
+          $messages[] = E::ts('Your card was declined. Please use a different card.');
+          break;
+
+        case 'GENERIC_DECLINE':
+          $messages[] = E::ts('The card was declined by the bank.');
+          break;
+
+        case 'INVALID_EXPIRATION':
+          $messages[] = E::ts('The card expiration date is invalid.');
+          break;
+
+        case 'CVV_FAILURE':
+          $messages[] = E::ts('The CVV security code is incorrect.');
+          break;
+
+        case 'ADDRESS_VERIFICATION_FAILURE':
+          $messages[] = E::ts('The billing ZIP/postal code did not match the card.');
+          break;
+
+        case 'INSUFFICIENT_FUNDS':
+          $messages[] = E::ts('The card has insufficient funds.');
+          break;
+
+        default:
+          $messages[] = !empty($err->getDetail()) ? $err->getDetail() : E::ts('The card could not be processed.');
+          break;
+      }
+    }
+
+    return implode(' ', $messages);
   }
 
 }

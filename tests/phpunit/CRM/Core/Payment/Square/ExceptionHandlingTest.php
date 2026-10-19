@@ -12,8 +12,7 @@ use Civi\Payment\Exception\PaymentProcessorException;
 /**
  * Translation of Square SDK exceptions into CRM_Core_Exception.
  *
- * Plus the human-friendly card-decline message translation used by
- * createCardOnFile().
+ * Plus the human-friendly card-decline messages for payments and cards on file.
  */
 class CRM_Core_Payment_Square_ExceptionHandlingTest extends CRM_Core_Payment_Square_SquareUnitTestCase {
 
@@ -50,39 +49,52 @@ class CRM_Core_Payment_Square_ExceptionHandlingTest extends CRM_Core_Payment_Squ
   }
 
   /**
-   * @dataProvider checkoutEntryPointProvider
+   * @dataProvider checkoutCardErrorProvider
    */
-  public function testCardDeclineUsesCorePaymentFailureException(string $entryPoint): void {
+  public function testCardDeclineUsesCorePaymentFailureException(string $entryPoint, string $code, string $message): void {
     $paymentsMock = $this->createMock(PaymentsClient::class);
-    $paymentsMock->method('create')->willThrowException(
-      $this->apiException(400, [
-        [
-          'category' => 'PAYMENT_METHOD_ERROR',
-          'code' => 'CARD_DECLINED',
-          'detail' => 'Card was declined.',
-        ],
-      ])
-    );
+    $exception = $this->apiException(400, [
+      [
+        'category' => 'PAYMENT_METHOD_ERROR',
+        'code' => $code,
+        'detail' => "Authorization error: '{$code}'",
+      ],
+    ]);
+    $paymentsMock->method('create')->willThrowException($exception);
 
     $processor = $this->processorWithMockClient(['payments' => $paymentsMock]);
 
-    $this->expectException(PaymentProcessorException::class);
-    $this->expectExceptionMessageMatches('/CARD_DECLINED/');
     $params = ['token' => 'cnon:declined', 'amount' => '10.00', 'invoiceID' => 'inv-declined'];
-    $processor->$entryPoint($params);
+    try {
+      $processor->$entryPoint($params);
+      $this->fail('A declined card must throw.');
+    }
+    catch (PaymentProcessorException $e) {
+      $this->assertSame($message, $e->getMessage());
+      $this->assertSame($exception, $e->getPrevious());
+    }
   }
 
-  public static function checkoutEntryPointProvider(): array {
-    return [['doPayment'], ['doDirectPayment']];
+  public static function checkoutCardErrorProvider(): array {
+    $cases = [];
+    foreach (['doPayment', 'doDirectPayment'] as $entryPoint) {
+      foreach (self::cardErrorCodeProvider() as $name => [$code, $message]) {
+        $cases[$entryPoint . ': ' . $name] = [$entryPoint, $code, $message];
+      }
+    }
+    return $cases;
   }
 
-  public function testCardOnFileDeclineUsesCorePaymentFailureException(): void {
+  /**
+   * @dataProvider cardErrorCodeProvider
+   */
+  public function testCardOnFileDeclineUsesCorePaymentFailureException(string $code, string $message): void {
     $cards = $this->createMock(CardsClient::class);
     $exception = $this->apiException(400, [
       [
         'category' => 'PAYMENT_METHOD_ERROR',
-        'code' => 'CARD_DECLINED',
-        'detail' => 'Card was declined.',
+        'code' => $code,
+        'detail' => "Authorization error: '{$code}'",
       ],
     ]);
     $cards->method('create')->willThrowException($exception);
@@ -94,7 +106,7 @@ class CRM_Core_Payment_Square_ExceptionHandlingTest extends CRM_Core_Payment_Squ
       $this->fail('A declined card must throw.');
     }
     catch (PaymentProcessorException $e) {
-      $this->assertSame('Your card was declined. Please use a different card.', $e->getMessage());
+      $this->assertSame($message, $e->getMessage());
       $this->assertSame($exception, $e->getPrevious());
     }
   }
@@ -208,12 +220,15 @@ class CRM_Core_Payment_Square_ExceptionHandlingTest extends CRM_Core_Payment_Squ
 
   public static function cardErrorCodeProvider(): array {
     return [
-      'card declined' => ['CARD_DECLINED', 'declined'],
-      'generic decline' => ['GENERIC_DECLINE', 'declined by the bank'],
-      'invalid expiration' => ['INVALID_EXPIRATION', 'expiration date is invalid'],
-      'cvv failure' => ['CVV_FAILURE', 'CVV security code is incorrect'],
-      'address verification failure' => ['ADDRESS_VERIFICATION_FAILURE', 'ZIP/postal code did not match'],
-      'insufficient funds' => ['INSUFFICIENT_FUNDS', 'insufficient funds'],
+      'card declined' => ['CARD_DECLINED', 'Your card was declined. Please use a different card.'],
+      'generic decline' => ['GENERIC_DECLINE', 'The card was declined by the bank.'],
+      'invalid expiration' => ['INVALID_EXPIRATION', 'The card expiration date is invalid.'],
+      'cvv failure' => ['CVV_FAILURE', 'The CVV security code is incorrect.'],
+      'address verification failure' => [
+        'ADDRESS_VERIFICATION_FAILURE',
+        'The billing ZIP/postal code did not match the card.',
+      ],
+      'insufficient funds' => ['INSUFFICIENT_FUNDS', 'The card has insufficient funds.'],
     ];
   }
 
