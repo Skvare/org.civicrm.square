@@ -6,7 +6,7 @@ Square payment processor extension for CiviCRM.
 - **Version:** 1.2.0 (beta)
 - **CiviCRM compatibility:** 6.10+
 - **License:** AGPL-3.0-or-later
-- **Square API version:** 2025-10-16 (sent by the bundled `square/square` 43.2 SDK)
+- **Square API version:** 2026-09-16 (sent by the bundled `square/square` 47.0 SDK)
 - **Requires:** `mjwshared`, `civi_contribute` (see `info.xml`)
 
 ---

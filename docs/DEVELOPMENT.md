@@ -87,7 +87,7 @@ release:
   has no `require-dev`, the tools being in `tools/`.
 - Its autoloader is appended, not prepended (`prepend-autoloader: false`), and
   loaded from `square_civicrm_config()`, so a site's own copies of shared
-  libraries such as Guzzle and Symfony win over the extension's.
+  libraries such as Symfony and the PSR HTTP interfaces win over the extension's.
 - `.gitattributes` leaves tests, tools and CI configuration out of archives.
 
 After changing `composer.json`, run `composer update` (or `composer require`)

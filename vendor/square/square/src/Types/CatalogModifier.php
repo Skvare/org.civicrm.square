@@ -51,6 +51,17 @@ class CatalogModifier extends JsonSerializableType
     private ?array $locationOverrides;
 
     /**
+     * (Optional) Name that the restaurant wants to display to their kitchen workers
+     * instead of the customer-facing name.
+     * e.g., customer name might be "Double Baconize" and the
+     * kitchen name is "Add 2x bacon"
+     *
+     * @var ?string $kitchenName
+     */
+    #[JsonProperty('kitchen_name')]
+    private ?string $kitchenName;
+
+    /**
      * The ID of the image associated with this `CatalogModifier` instance.
      * Currently this image is not displayed by Square, but is free to be displayed in 3rd party applications.
      *
@@ -66,6 +77,21 @@ class CatalogModifier extends JsonSerializableType
     private ?bool $hiddenOnline;
 
     /**
+     * Child `CatalogModifierList`s that this `CatalogModifier` nests for multi-step choices.
+     * When a customer or staff member selects this modifier, the relevant follow-up modifier list appears.
+     * For example, selecting "Hummus" reveals a secondary "Choose Hummus Flavor" set, and selecting a flavor
+     * could reveal a third-level portion size set.
+     *
+     * Each entry references a child modifier list. Each modifier can nest up to 5 child modifier list, and
+     * supports up to 3 levels of nesting depth. The order in `child_modifier_list_ids` determines display order
+     * during checkout.
+     *
+     * @var ?array<string> $childModifierListIds
+     */
+    #[JsonProperty('child_modifier_list_ids'), ArrayType(['string'])]
+    private ?array $childModifierListIds;
+
+    /**
      * @param array{
      *   name?: ?string,
      *   priceMoney?: ?Money,
@@ -73,8 +99,10 @@ class CatalogModifier extends JsonSerializableType
      *   ordinal?: ?int,
      *   modifierListId?: ?string,
      *   locationOverrides?: ?array<ModifierLocationOverrides>,
+     *   kitchenName?: ?string,
      *   imageId?: ?string,
      *   hiddenOnline?: ?bool,
+     *   childModifierListIds?: ?array<string>,
      * } $values
      */
     public function __construct(
@@ -86,8 +114,10 @@ class CatalogModifier extends JsonSerializableType
         $this->ordinal = $values['ordinal'] ?? null;
         $this->modifierListId = $values['modifierListId'] ?? null;
         $this->locationOverrides = $values['locationOverrides'] ?? null;
+        $this->kitchenName = $values['kitchenName'] ?? null;
         $this->imageId = $values['imageId'] ?? null;
         $this->hiddenOnline = $values['hiddenOnline'] ?? null;
+        $this->childModifierListIds = $values['childModifierListIds'] ?? null;
     }
 
     /**
@@ -104,6 +134,7 @@ class CatalogModifier extends JsonSerializableType
     public function setName(?string $value = null): self
     {
         $this->name = $value;
+        $this->_setField('name');
         return $this;
     }
 
@@ -121,6 +152,7 @@ class CatalogModifier extends JsonSerializableType
     public function setPriceMoney(?Money $value = null): self
     {
         $this->priceMoney = $value;
+        $this->_setField('priceMoney');
         return $this;
     }
 
@@ -138,6 +170,7 @@ class CatalogModifier extends JsonSerializableType
     public function setOnByDefault(?bool $value = null): self
     {
         $this->onByDefault = $value;
+        $this->_setField('onByDefault');
         return $this;
     }
 
@@ -155,6 +188,7 @@ class CatalogModifier extends JsonSerializableType
     public function setOrdinal(?int $value = null): self
     {
         $this->ordinal = $value;
+        $this->_setField('ordinal');
         return $this;
     }
 
@@ -172,6 +206,7 @@ class CatalogModifier extends JsonSerializableType
     public function setModifierListId(?string $value = null): self
     {
         $this->modifierListId = $value;
+        $this->_setField('modifierListId');
         return $this;
     }
 
@@ -189,6 +224,25 @@ class CatalogModifier extends JsonSerializableType
     public function setLocationOverrides(?array $value = null): self
     {
         $this->locationOverrides = $value;
+        $this->_setField('locationOverrides');
+        return $this;
+    }
+
+    /**
+     * @return ?string
+     */
+    public function getKitchenName(): ?string
+    {
+        return $this->kitchenName;
+    }
+
+    /**
+     * @param ?string $value
+     */
+    public function setKitchenName(?string $value = null): self
+    {
+        $this->kitchenName = $value;
+        $this->_setField('kitchenName');
         return $this;
     }
 
@@ -206,6 +260,7 @@ class CatalogModifier extends JsonSerializableType
     public function setImageId(?string $value = null): self
     {
         $this->imageId = $value;
+        $this->_setField('imageId');
         return $this;
     }
 
@@ -223,6 +278,25 @@ class CatalogModifier extends JsonSerializableType
     public function setHiddenOnline(?bool $value = null): self
     {
         $this->hiddenOnline = $value;
+        $this->_setField('hiddenOnline');
+        return $this;
+    }
+
+    /**
+     * @return ?array<string>
+     */
+    public function getChildModifierListIds(): ?array
+    {
+        return $this->childModifierListIds;
+    }
+
+    /**
+     * @param ?array<string> $value
+     */
+    public function setChildModifierListIds(?array $value = null): self
+    {
+        $this->childModifierListIds = $value;
+        $this->_setField('childModifierListIds');
         return $this;
     }
 

@@ -4,7 +4,7 @@ namespace Square\Webhooks;
 
 use Square\Webhooks\EventTypes\EventTypesClient;
 use Square\Webhooks\Subscriptions\SubscriptionsClient;
-use GuzzleHttp\ClientInterface;
+use Psr\Http\Client\ClientInterface;
 use Square\Core\Client\RawClient;
 
 class WebhooksClient
@@ -26,7 +26,7 @@ class WebhooksClient
      *   maxRetries?: int,
      *   timeout?: float,
      *   headers?: array<string, string>,
-     * } $options
+     * } $options @phpstan-ignore-next-line Property is used in endpoint methods via HttpEndpointGenerator
      */
     private array $options;
 

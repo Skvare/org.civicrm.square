@@ -34,9 +34,21 @@ class OrderLineItemPricingBlocklists extends JsonSerializableType
     private ?array $blockedTaxes;
 
     /**
+     * A list of service charges blocked from applying to the line item.
+     * Service charges can be blocked by the `service_charge_uid` (for ad hoc
+     * service charges) or the `service_charge_catalog_object_id` (for catalog
+     * service charges).
+     *
+     * @var ?array<OrderLineItemPricingBlocklistsBlockedServiceCharge> $blockedServiceCharges
+     */
+    #[JsonProperty('blocked_service_charges'), ArrayType([OrderLineItemPricingBlocklistsBlockedServiceCharge::class])]
+    private ?array $blockedServiceCharges;
+
+    /**
      * @param array{
      *   blockedDiscounts?: ?array<OrderLineItemPricingBlocklistsBlockedDiscount>,
      *   blockedTaxes?: ?array<OrderLineItemPricingBlocklistsBlockedTax>,
+     *   blockedServiceCharges?: ?array<OrderLineItemPricingBlocklistsBlockedServiceCharge>,
      * } $values
      */
     public function __construct(
@@ -44,6 +56,7 @@ class OrderLineItemPricingBlocklists extends JsonSerializableType
     ) {
         $this->blockedDiscounts = $values['blockedDiscounts'] ?? null;
         $this->blockedTaxes = $values['blockedTaxes'] ?? null;
+        $this->blockedServiceCharges = $values['blockedServiceCharges'] ?? null;
     }
 
     /**
@@ -60,6 +73,7 @@ class OrderLineItemPricingBlocklists extends JsonSerializableType
     public function setBlockedDiscounts(?array $value = null): self
     {
         $this->blockedDiscounts = $value;
+        $this->_setField('blockedDiscounts');
         return $this;
     }
 
@@ -77,6 +91,25 @@ class OrderLineItemPricingBlocklists extends JsonSerializableType
     public function setBlockedTaxes(?array $value = null): self
     {
         $this->blockedTaxes = $value;
+        $this->_setField('blockedTaxes');
+        return $this;
+    }
+
+    /**
+     * @return ?array<OrderLineItemPricingBlocklistsBlockedServiceCharge>
+     */
+    public function getBlockedServiceCharges(): ?array
+    {
+        return $this->blockedServiceCharges;
+    }
+
+    /**
+     * @param ?array<OrderLineItemPricingBlocklistsBlockedServiceCharge> $value
+     */
+    public function setBlockedServiceCharges(?array $value = null): self
+    {
+        $this->blockedServiceCharges = $value;
+        $this->_setField('blockedServiceCharges');
         return $this;
     }
 

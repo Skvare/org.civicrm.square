@@ -3,7 +3,7 @@
 namespace Square\CashDrawers;
 
 use Square\CashDrawers\Shifts\ShiftsClient;
-use GuzzleHttp\ClientInterface;
+use Psr\Http\Client\ClientInterface;
 use Square\Core\Client\RawClient;
 
 class CashDrawersClient
@@ -20,7 +20,7 @@ class CashDrawersClient
      *   maxRetries?: int,
      *   timeout?: float,
      *   headers?: array<string, string>,
-     * } $options
+     * } $options @phpstan-ignore-next-line Property is used in endpoint methods via HttpEndpointGenerator
      */
     private array $options;
 

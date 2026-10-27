@@ -4,7 +4,7 @@ namespace Square\Orders;
 
 use Square\Orders\CustomAttributeDefinitions\CustomAttributeDefinitionsClient;
 use Square\Orders\CustomAttributes\CustomAttributesClient;
-use GuzzleHttp\ClientInterface;
+use Psr\Http\Client\ClientInterface;
 use Square\Core\Client\RawClient;
 use Square\Types\CreateOrderRequest;
 use Square\Types\CreateOrderResponse;
@@ -14,7 +14,6 @@ use Square\Core\Json\JsonApiRequest;
 use Square\Environments;
 use Square\Core\Client\HttpMethod;
 use JsonException;
-use GuzzleHttp\Exception\RequestException;
 use Psr\Http\Client\ClientExceptionInterface;
 use Square\Orders\Requests\BatchGetOrdersRequest;
 use Square\Types\BatchGetOrdersResponse;
@@ -50,7 +49,7 @@ class OrdersClient
      *   maxRetries?: int,
      *   timeout?: float,
      *   headers?: array<string, string>,
-     * } $options
+     * } $options @phpstan-ignore-next-line Property is used in endpoint methods via HttpEndpointGenerator
      */
     private array $options;
 
@@ -121,16 +120,6 @@ class OrdersClient
             }
         } catch (JsonException $e) {
             throw new SquareException(message: "Failed to deserialize response: {$e->getMessage()}", previous: $e);
-        } catch (RequestException $e) {
-            $response = $e->getResponse();
-            if ($response === null) {
-                throw new SquareException(message: $e->getMessage(), previous: $e);
-            }
-            throw new SquareApiException(
-                message: "API request failed",
-                statusCode: $response->getStatusCode(),
-                body: $response->getBody()->getContents(),
-            );
         } catch (ClientExceptionInterface $e) {
             throw new SquareException(message: $e->getMessage(), previous: $e);
         }
@@ -179,16 +168,6 @@ class OrdersClient
             }
         } catch (JsonException $e) {
             throw new SquareException(message: "Failed to deserialize response: {$e->getMessage()}", previous: $e);
-        } catch (RequestException $e) {
-            $response = $e->getResponse();
-            if ($response === null) {
-                throw new SquareException(message: $e->getMessage(), previous: $e);
-            }
-            throw new SquareApiException(
-                message: "API request failed",
-                statusCode: $response->getStatusCode(),
-                body: $response->getBody()->getContents(),
-            );
         } catch (ClientExceptionInterface $e) {
             throw new SquareException(message: $e->getMessage(), previous: $e);
         }
@@ -235,16 +214,6 @@ class OrdersClient
             }
         } catch (JsonException $e) {
             throw new SquareException(message: "Failed to deserialize response: {$e->getMessage()}", previous: $e);
-        } catch (RequestException $e) {
-            $response = $e->getResponse();
-            if ($response === null) {
-                throw new SquareException(message: $e->getMessage(), previous: $e);
-            }
-            throw new SquareApiException(
-                message: "API request failed",
-                statusCode: $response->getStatusCode(),
-                body: $response->getBody()->getContents(),
-            );
         } catch (ClientExceptionInterface $e) {
             throw new SquareException(message: $e->getMessage(), previous: $e);
         }
@@ -292,16 +261,6 @@ class OrdersClient
             }
         } catch (JsonException $e) {
             throw new SquareException(message: "Failed to deserialize response: {$e->getMessage()}", previous: $e);
-        } catch (RequestException $e) {
-            $response = $e->getResponse();
-            if ($response === null) {
-                throw new SquareException(message: $e->getMessage(), previous: $e);
-            }
-            throw new SquareApiException(
-                message: "API request failed",
-                statusCode: $response->getStatusCode(),
-                body: $response->getBody()->getContents(),
-            );
         } catch (ClientExceptionInterface $e) {
             throw new SquareException(message: $e->getMessage(), previous: $e);
         }
@@ -328,8 +287,9 @@ class OrdersClient
      *
      * Note that details for orders processed with Square Point of Sale while in
      * offline mode might not be transmitted to Square for up to 72 hours. Offline
-     * orders have a `created_at` value that reflects the time the order was created,
-     * not the time it was subsequently transmitted to Square.
+     * orders have a `created_at` value that reflects the time the order was
+     * transmitted to Square and created server-side, not the time the order was
+     * created on the Point of Sale device.
      *
      * @param SearchOrdersRequest $request
      * @param ?array{
@@ -364,16 +324,6 @@ class OrdersClient
             }
         } catch (JsonException $e) {
             throw new SquareException(message: "Failed to deserialize response: {$e->getMessage()}", previous: $e);
-        } catch (RequestException $e) {
-            $response = $e->getResponse();
-            if ($response === null) {
-                throw new SquareException(message: $e->getMessage(), previous: $e);
-            }
-            throw new SquareApiException(
-                message: "API request failed",
-                statusCode: $response->getStatusCode(),
-                body: $response->getBody()->getContents(),
-            );
         } catch (ClientExceptionInterface $e) {
             throw new SquareException(message: $e->getMessage(), previous: $e);
         }
@@ -419,16 +369,6 @@ class OrdersClient
             }
         } catch (JsonException $e) {
             throw new SquareException(message: "Failed to deserialize response: {$e->getMessage()}", previous: $e);
-        } catch (RequestException $e) {
-            $response = $e->getResponse();
-            if ($response === null) {
-                throw new SquareException(message: $e->getMessage(), previous: $e);
-            }
-            throw new SquareApiException(
-                message: "API request failed",
-                statusCode: $response->getStatusCode(),
-                body: $response->getBody()->getContents(),
-            );
         } catch (ClientExceptionInterface $e) {
             throw new SquareException(message: $e->getMessage(), previous: $e);
         }
@@ -489,16 +429,6 @@ class OrdersClient
             }
         } catch (JsonException $e) {
             throw new SquareException(message: "Failed to deserialize response: {$e->getMessage()}", previous: $e);
-        } catch (RequestException $e) {
-            $response = $e->getResponse();
-            if ($response === null) {
-                throw new SquareException(message: $e->getMessage(), previous: $e);
-            }
-            throw new SquareApiException(
-                message: "API request failed",
-                statusCode: $response->getStatusCode(),
-                body: $response->getBody()->getContents(),
-            );
         } catch (ClientExceptionInterface $e) {
             throw new SquareException(message: $e->getMessage(), previous: $e);
         }
@@ -558,16 +488,6 @@ class OrdersClient
             }
         } catch (JsonException $e) {
             throw new SquareException(message: "Failed to deserialize response: {$e->getMessage()}", previous: $e);
-        } catch (RequestException $e) {
-            $response = $e->getResponse();
-            if ($response === null) {
-                throw new SquareException(message: $e->getMessage(), previous: $e);
-            }
-            throw new SquareApiException(
-                message: "API request failed",
-                statusCode: $response->getStatusCode(),
-                body: $response->getBody()->getContents(),
-            );
         } catch (ClientExceptionInterface $e) {
             throw new SquareException(message: $e->getMessage(), previous: $e);
         }

@@ -97,6 +97,12 @@ class OrderLineItemModifier extends JsonSerializableType
     private ?array $metadata;
 
     /**
+     * @var ?string $parentModifierUid The `uid` of the parent modifier, if this modifier is nested under another modifier.
+     */
+    #[JsonProperty('parent_modifier_uid')]
+    private ?string $parentModifierUid;
+
+    /**
      * @param array{
      *   uid?: ?string,
      *   catalogObjectId?: ?string,
@@ -106,6 +112,7 @@ class OrderLineItemModifier extends JsonSerializableType
      *   basePriceMoney?: ?Money,
      *   totalPriceMoney?: ?Money,
      *   metadata?: ?array<string, ?string>,
+     *   parentModifierUid?: ?string,
      * } $values
      */
     public function __construct(
@@ -119,6 +126,7 @@ class OrderLineItemModifier extends JsonSerializableType
         $this->basePriceMoney = $values['basePriceMoney'] ?? null;
         $this->totalPriceMoney = $values['totalPriceMoney'] ?? null;
         $this->metadata = $values['metadata'] ?? null;
+        $this->parentModifierUid = $values['parentModifierUid'] ?? null;
     }
 
     /**
@@ -135,6 +143,7 @@ class OrderLineItemModifier extends JsonSerializableType
     public function setUid(?string $value = null): self
     {
         $this->uid = $value;
+        $this->_setField('uid');
         return $this;
     }
 
@@ -152,6 +161,7 @@ class OrderLineItemModifier extends JsonSerializableType
     public function setCatalogObjectId(?string $value = null): self
     {
         $this->catalogObjectId = $value;
+        $this->_setField('catalogObjectId');
         return $this;
     }
 
@@ -169,6 +179,7 @@ class OrderLineItemModifier extends JsonSerializableType
     public function setCatalogVersion(?int $value = null): self
     {
         $this->catalogVersion = $value;
+        $this->_setField('catalogVersion');
         return $this;
     }
 
@@ -186,6 +197,7 @@ class OrderLineItemModifier extends JsonSerializableType
     public function setName(?string $value = null): self
     {
         $this->name = $value;
+        $this->_setField('name');
         return $this;
     }
 
@@ -203,6 +215,7 @@ class OrderLineItemModifier extends JsonSerializableType
     public function setQuantity(?string $value = null): self
     {
         $this->quantity = $value;
+        $this->_setField('quantity');
         return $this;
     }
 
@@ -220,6 +233,7 @@ class OrderLineItemModifier extends JsonSerializableType
     public function setBasePriceMoney(?Money $value = null): self
     {
         $this->basePriceMoney = $value;
+        $this->_setField('basePriceMoney');
         return $this;
     }
 
@@ -237,6 +251,7 @@ class OrderLineItemModifier extends JsonSerializableType
     public function setTotalPriceMoney(?Money $value = null): self
     {
         $this->totalPriceMoney = $value;
+        $this->_setField('totalPriceMoney');
         return $this;
     }
 
@@ -254,6 +269,25 @@ class OrderLineItemModifier extends JsonSerializableType
     public function setMetadata(?array $value = null): self
     {
         $this->metadata = $value;
+        $this->_setField('metadata');
+        return $this;
+    }
+
+    /**
+     * @return ?string
+     */
+    public function getParentModifierUid(): ?string
+    {
+        return $this->parentModifierUid;
+    }
+
+    /**
+     * @param ?string $value
+     */
+    public function setParentModifierUid(?string $value = null): self
+    {
+        $this->parentModifierUid = $value;
+        $this->_setField('parentModifierUid');
         return $this;
     }
 

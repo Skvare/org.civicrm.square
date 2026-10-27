@@ -90,7 +90,11 @@ class CatalogItemVariation extends JsonSerializableType
     private ?array $locationOverrides;
 
     /**
-     * @var ?bool $trackInventory If `true`, inventory tracking is active for the variation.
+     * If `true`, inventory tracking is active for the variation at all locations by default.
+     * This value can be overridden for specific locations using `ItemVariationLocationOverrides.track_inventory`.
+     * If unset at both levels, inventory tracking is disabled.
+     *
+     * @var ?bool $trackInventory
      */
     #[JsonProperty('track_inventory')]
     private ?bool $trackInventory;
@@ -98,6 +102,8 @@ class CatalogItemVariation extends JsonSerializableType
     /**
      * Indicates whether the item variation displays an alert when its inventory quantity is less than or equal
      * to its `inventory_alert_threshold`.
+     *
+     * Deprecated because this field has never been global.
      * See [InventoryAlertType](#type-inventoryalerttype) for possible values
      *
      * @var ?value-of<InventoryAlertType> $inventoryAlertType
@@ -107,9 +113,9 @@ class CatalogItemVariation extends JsonSerializableType
 
     /**
      * If the inventory quantity for the variation is less than or equal to this value and `inventory_alert_type`
-     * is `LOW_QUANTITY`, the variation displays an alert in the merchant dashboard.
+     * is `LOW_QUANTITY`, the variation displays an alert in the merchant dashboard. This value is always an integer.
      *
-     * This value is always an integer.
+     * Deprecated because this field has never been global.
      *
      * @var ?int $inventoryAlertThreshold
      */
@@ -212,6 +218,27 @@ class CatalogItemVariation extends JsonSerializableType
     private ?CatalogStockConversion $stockableConversion;
 
     /**
+     * (Optional) Name that the restaurant wants to display to their kitchen workers
+     * instead of the customer-facing name.
+     * e.g., customer name might be "Mega-Jumbo Triplesized" and the
+     * kitchen name is "Large container"
+     *
+     * @var ?string $kitchenName
+     */
+    #[JsonProperty('kitchen_name')]
+    private ?string $kitchenName;
+
+    /**
+     * Details of the vendor this product is purchased from.
+     * This field can be set only if the seller has an active subscription
+     * to either Square for Retail Premium or Square for Restaurants Premium.
+     *
+     * @var ?array<CatalogItemVariationVendorInformation> $vendorInformation
+     */
+    #[JsonProperty('vendor_information'), ArrayType([CatalogItemVariationVendorInformation::class])]
+    private ?array $vendorInformation;
+
+    /**
      * @param array{
      *   itemId?: ?string,
      *   name?: ?string,
@@ -234,6 +261,8 @@ class CatalogItemVariation extends JsonSerializableType
      *   imageIds?: ?array<string>,
      *   teamMemberIds?: ?array<string>,
      *   stockableConversion?: ?CatalogStockConversion,
+     *   kitchenName?: ?string,
+     *   vendorInformation?: ?array<CatalogItemVariationVendorInformation>,
      * } $values
      */
     public function __construct(
@@ -260,6 +289,8 @@ class CatalogItemVariation extends JsonSerializableType
         $this->imageIds = $values['imageIds'] ?? null;
         $this->teamMemberIds = $values['teamMemberIds'] ?? null;
         $this->stockableConversion = $values['stockableConversion'] ?? null;
+        $this->kitchenName = $values['kitchenName'] ?? null;
+        $this->vendorInformation = $values['vendorInformation'] ?? null;
     }
 
     /**
@@ -276,6 +307,7 @@ class CatalogItemVariation extends JsonSerializableType
     public function setItemId(?string $value = null): self
     {
         $this->itemId = $value;
+        $this->_setField('itemId');
         return $this;
     }
 
@@ -293,6 +325,7 @@ class CatalogItemVariation extends JsonSerializableType
     public function setName(?string $value = null): self
     {
         $this->name = $value;
+        $this->_setField('name');
         return $this;
     }
 
@@ -310,6 +343,7 @@ class CatalogItemVariation extends JsonSerializableType
     public function setSku(?string $value = null): self
     {
         $this->sku = $value;
+        $this->_setField('sku');
         return $this;
     }
 
@@ -327,6 +361,7 @@ class CatalogItemVariation extends JsonSerializableType
     public function setUpc(?string $value = null): self
     {
         $this->upc = $value;
+        $this->_setField('upc');
         return $this;
     }
 
@@ -344,6 +379,7 @@ class CatalogItemVariation extends JsonSerializableType
     public function setOrdinal(?int $value = null): self
     {
         $this->ordinal = $value;
+        $this->_setField('ordinal');
         return $this;
     }
 
@@ -361,6 +397,7 @@ class CatalogItemVariation extends JsonSerializableType
     public function setPricingType(?string $value = null): self
     {
         $this->pricingType = $value;
+        $this->_setField('pricingType');
         return $this;
     }
 
@@ -378,6 +415,7 @@ class CatalogItemVariation extends JsonSerializableType
     public function setPriceMoney(?Money $value = null): self
     {
         $this->priceMoney = $value;
+        $this->_setField('priceMoney');
         return $this;
     }
 
@@ -395,6 +433,7 @@ class CatalogItemVariation extends JsonSerializableType
     public function setLocationOverrides(?array $value = null): self
     {
         $this->locationOverrides = $value;
+        $this->_setField('locationOverrides');
         return $this;
     }
 
@@ -412,6 +451,7 @@ class CatalogItemVariation extends JsonSerializableType
     public function setTrackInventory(?bool $value = null): self
     {
         $this->trackInventory = $value;
+        $this->_setField('trackInventory');
         return $this;
     }
 
@@ -429,6 +469,7 @@ class CatalogItemVariation extends JsonSerializableType
     public function setInventoryAlertType(?string $value = null): self
     {
         $this->inventoryAlertType = $value;
+        $this->_setField('inventoryAlertType');
         return $this;
     }
 
@@ -446,6 +487,7 @@ class CatalogItemVariation extends JsonSerializableType
     public function setInventoryAlertThreshold(?int $value = null): self
     {
         $this->inventoryAlertThreshold = $value;
+        $this->_setField('inventoryAlertThreshold');
         return $this;
     }
 
@@ -463,6 +505,7 @@ class CatalogItemVariation extends JsonSerializableType
     public function setUserData(?string $value = null): self
     {
         $this->userData = $value;
+        $this->_setField('userData');
         return $this;
     }
 
@@ -480,6 +523,7 @@ class CatalogItemVariation extends JsonSerializableType
     public function setServiceDuration(?int $value = null): self
     {
         $this->serviceDuration = $value;
+        $this->_setField('serviceDuration');
         return $this;
     }
 
@@ -497,6 +541,7 @@ class CatalogItemVariation extends JsonSerializableType
     public function setAvailableForBooking(?bool $value = null): self
     {
         $this->availableForBooking = $value;
+        $this->_setField('availableForBooking');
         return $this;
     }
 
@@ -514,6 +559,7 @@ class CatalogItemVariation extends JsonSerializableType
     public function setItemOptionValues(?array $value = null): self
     {
         $this->itemOptionValues = $value;
+        $this->_setField('itemOptionValues');
         return $this;
     }
 
@@ -531,6 +577,7 @@ class CatalogItemVariation extends JsonSerializableType
     public function setMeasurementUnitId(?string $value = null): self
     {
         $this->measurementUnitId = $value;
+        $this->_setField('measurementUnitId');
         return $this;
     }
 
@@ -548,6 +595,7 @@ class CatalogItemVariation extends JsonSerializableType
     public function setSellable(?bool $value = null): self
     {
         $this->sellable = $value;
+        $this->_setField('sellable');
         return $this;
     }
 
@@ -565,6 +613,7 @@ class CatalogItemVariation extends JsonSerializableType
     public function setStockable(?bool $value = null): self
     {
         $this->stockable = $value;
+        $this->_setField('stockable');
         return $this;
     }
 
@@ -582,6 +631,7 @@ class CatalogItemVariation extends JsonSerializableType
     public function setImageIds(?array $value = null): self
     {
         $this->imageIds = $value;
+        $this->_setField('imageIds');
         return $this;
     }
 
@@ -599,6 +649,7 @@ class CatalogItemVariation extends JsonSerializableType
     public function setTeamMemberIds(?array $value = null): self
     {
         $this->teamMemberIds = $value;
+        $this->_setField('teamMemberIds');
         return $this;
     }
 
@@ -616,6 +667,43 @@ class CatalogItemVariation extends JsonSerializableType
     public function setStockableConversion(?CatalogStockConversion $value = null): self
     {
         $this->stockableConversion = $value;
+        $this->_setField('stockableConversion');
+        return $this;
+    }
+
+    /**
+     * @return ?string
+     */
+    public function getKitchenName(): ?string
+    {
+        return $this->kitchenName;
+    }
+
+    /**
+     * @param ?string $value
+     */
+    public function setKitchenName(?string $value = null): self
+    {
+        $this->kitchenName = $value;
+        $this->_setField('kitchenName');
+        return $this;
+    }
+
+    /**
+     * @return ?array<CatalogItemVariationVendorInformation>
+     */
+    public function getVendorInformation(): ?array
+    {
+        return $this->vendorInformation;
+    }
+
+    /**
+     * @param ?array<CatalogItemVariationVendorInformation> $value
+     */
+    public function setVendorInformation(?array $value = null): self
+    {
+        $this->vendorInformation = $value;
+        $this->_setField('vendorInformation');
         return $this;
     }
 

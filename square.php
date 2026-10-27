@@ -44,7 +44,7 @@ function square_civicrm_config(\CRM_Core_Config $config): void {
   _square_civix_civicrm_config($config);
   // The Square SDK and its dependencies. Appended to the autoloaders, not
   // prepended (see composer.json), so the site's own copies of shared
-  // libraries such as Guzzle win.
+  // libraries such as Symfony HttpClient and the PSR HTTP interfaces win.
   require_once __DIR__ . '/vendor/autoload.php';
 }
 

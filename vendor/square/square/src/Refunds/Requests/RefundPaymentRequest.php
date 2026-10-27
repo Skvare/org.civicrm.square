@@ -5,6 +5,7 @@ namespace Square\Refunds\Requests;
 use Square\Core\Json\JsonSerializableType;
 use Square\Core\Json\JsonProperty;
 use Square\Types\Money;
+use Square\Core\Types\ArrayType;
 use Square\Types\DestinationDetailsCashRefundDetails;
 use Square\Types\DestinationDetailsExternalRefundDetails;
 
@@ -60,6 +61,17 @@ class RefundPaymentRequest extends JsonSerializableType
      */
     #[JsonProperty('app_fee_money')]
     private ?Money $appFeeMoney;
+
+    /**
+     * Details pertaining to contributors to the refund of the application fee.
+     * The sum of the amounts in the app_fee_allocations must equal the app_fee_money amount, if
+     * present. If populated, an allocation must be present for every party that expects to contribute
+     * a portion of the refunded application fee, including the application developer.
+     *
+     * @var ?array<mixed> $appFeeAllocations
+     */
+    #[JsonProperty('app_fee_allocations'), ArrayType(['mixed'])]
+    private ?array $appFeeAllocations;
 
     /**
      * The unique ID of the payment being refunded.
@@ -157,6 +169,7 @@ class RefundPaymentRequest extends JsonSerializableType
      *   idempotencyKey: string,
      *   amountMoney: Money,
      *   appFeeMoney?: ?Money,
+     *   appFeeAllocations?: ?array<mixed>,
      *   paymentId?: ?string,
      *   destinationId?: ?string,
      *   unlinked?: ?bool,
@@ -175,6 +188,7 @@ class RefundPaymentRequest extends JsonSerializableType
         $this->idempotencyKey = $values['idempotencyKey'];
         $this->amountMoney = $values['amountMoney'];
         $this->appFeeMoney = $values['appFeeMoney'] ?? null;
+        $this->appFeeAllocations = $values['appFeeAllocations'] ?? null;
         $this->paymentId = $values['paymentId'] ?? null;
         $this->destinationId = $values['destinationId'] ?? null;
         $this->unlinked = $values['unlinked'] ?? null;
@@ -201,6 +215,7 @@ class RefundPaymentRequest extends JsonSerializableType
     public function setIdempotencyKey(string $value): self
     {
         $this->idempotencyKey = $value;
+        $this->_setField('idempotencyKey');
         return $this;
     }
 
@@ -218,6 +233,7 @@ class RefundPaymentRequest extends JsonSerializableType
     public function setAmountMoney(Money $value): self
     {
         $this->amountMoney = $value;
+        $this->_setField('amountMoney');
         return $this;
     }
 
@@ -235,6 +251,25 @@ class RefundPaymentRequest extends JsonSerializableType
     public function setAppFeeMoney(?Money $value = null): self
     {
         $this->appFeeMoney = $value;
+        $this->_setField('appFeeMoney');
+        return $this;
+    }
+
+    /**
+     * @return ?array<mixed>
+     */
+    public function getAppFeeAllocations(): ?array
+    {
+        return $this->appFeeAllocations;
+    }
+
+    /**
+     * @param ?array<mixed> $value
+     */
+    public function setAppFeeAllocations(?array $value = null): self
+    {
+        $this->appFeeAllocations = $value;
+        $this->_setField('appFeeAllocations');
         return $this;
     }
 
@@ -252,6 +287,7 @@ class RefundPaymentRequest extends JsonSerializableType
     public function setPaymentId(?string $value = null): self
     {
         $this->paymentId = $value;
+        $this->_setField('paymentId');
         return $this;
     }
 
@@ -269,6 +305,7 @@ class RefundPaymentRequest extends JsonSerializableType
     public function setDestinationId(?string $value = null): self
     {
         $this->destinationId = $value;
+        $this->_setField('destinationId');
         return $this;
     }
 
@@ -286,6 +323,7 @@ class RefundPaymentRequest extends JsonSerializableType
     public function setUnlinked(?bool $value = null): self
     {
         $this->unlinked = $value;
+        $this->_setField('unlinked');
         return $this;
     }
 
@@ -303,6 +341,7 @@ class RefundPaymentRequest extends JsonSerializableType
     public function setLocationId(?string $value = null): self
     {
         $this->locationId = $value;
+        $this->_setField('locationId');
         return $this;
     }
 
@@ -320,6 +359,7 @@ class RefundPaymentRequest extends JsonSerializableType
     public function setCustomerId(?string $value = null): self
     {
         $this->customerId = $value;
+        $this->_setField('customerId');
         return $this;
     }
 
@@ -337,6 +377,7 @@ class RefundPaymentRequest extends JsonSerializableType
     public function setReason(?string $value = null): self
     {
         $this->reason = $value;
+        $this->_setField('reason');
         return $this;
     }
 
@@ -354,6 +395,7 @@ class RefundPaymentRequest extends JsonSerializableType
     public function setPaymentVersionToken(?string $value = null): self
     {
         $this->paymentVersionToken = $value;
+        $this->_setField('paymentVersionToken');
         return $this;
     }
 
@@ -371,6 +413,7 @@ class RefundPaymentRequest extends JsonSerializableType
     public function setTeamMemberId(?string $value = null): self
     {
         $this->teamMemberId = $value;
+        $this->_setField('teamMemberId');
         return $this;
     }
 
@@ -388,6 +431,7 @@ class RefundPaymentRequest extends JsonSerializableType
     public function setCashDetails(?DestinationDetailsCashRefundDetails $value = null): self
     {
         $this->cashDetails = $value;
+        $this->_setField('cashDetails');
         return $this;
     }
 
@@ -405,6 +449,7 @@ class RefundPaymentRequest extends JsonSerializableType
     public function setExternalDetails(?DestinationDetailsExternalRefundDetails $value = null): self
     {
         $this->externalDetails = $value;
+        $this->_setField('externalDetails');
         return $this;
     }
 }

@@ -10,6 +10,7 @@ use Square\Types\SortOrder;
 use Square\Types\CatalogItemProductType;
 use Square\Types\CustomAttributeFilter;
 use Square\Types\ArchivedState;
+use Square\Types\IncludeOptions;
 
 class SearchCatalogItemsRequest extends JsonSerializableType
 {
@@ -88,6 +89,12 @@ class SearchCatalogItemsRequest extends JsonSerializableType
     private ?string $archivedState;
 
     /**
+     * @var ?IncludeOptions $includeOptions Options to include related resources in the response.
+     */
+    #[JsonProperty('include_options')]
+    private ?IncludeOptions $includeOptions;
+
+    /**
      * @param array{
      *   textFilter?: ?string,
      *   categoryIds?: ?array<string>,
@@ -99,6 +106,7 @@ class SearchCatalogItemsRequest extends JsonSerializableType
      *   productTypes?: ?array<value-of<CatalogItemProductType>>,
      *   customAttributeFilters?: ?array<CustomAttributeFilter>,
      *   archivedState?: ?value-of<ArchivedState>,
+     *   includeOptions?: ?IncludeOptions,
      * } $values
      */
     public function __construct(
@@ -114,6 +122,7 @@ class SearchCatalogItemsRequest extends JsonSerializableType
         $this->productTypes = $values['productTypes'] ?? null;
         $this->customAttributeFilters = $values['customAttributeFilters'] ?? null;
         $this->archivedState = $values['archivedState'] ?? null;
+        $this->includeOptions = $values['includeOptions'] ?? null;
     }
 
     /**
@@ -130,6 +139,7 @@ class SearchCatalogItemsRequest extends JsonSerializableType
     public function setTextFilter(?string $value = null): self
     {
         $this->textFilter = $value;
+        $this->_setField('textFilter');
         return $this;
     }
 
@@ -147,6 +157,7 @@ class SearchCatalogItemsRequest extends JsonSerializableType
     public function setCategoryIds(?array $value = null): self
     {
         $this->categoryIds = $value;
+        $this->_setField('categoryIds');
         return $this;
     }
 
@@ -164,6 +175,7 @@ class SearchCatalogItemsRequest extends JsonSerializableType
     public function setStockLevels(?array $value = null): self
     {
         $this->stockLevels = $value;
+        $this->_setField('stockLevels');
         return $this;
     }
 
@@ -181,6 +193,7 @@ class SearchCatalogItemsRequest extends JsonSerializableType
     public function setEnabledLocationIds(?array $value = null): self
     {
         $this->enabledLocationIds = $value;
+        $this->_setField('enabledLocationIds');
         return $this;
     }
 
@@ -198,6 +211,7 @@ class SearchCatalogItemsRequest extends JsonSerializableType
     public function setCursor(?string $value = null): self
     {
         $this->cursor = $value;
+        $this->_setField('cursor');
         return $this;
     }
 
@@ -215,6 +229,7 @@ class SearchCatalogItemsRequest extends JsonSerializableType
     public function setLimit(?int $value = null): self
     {
         $this->limit = $value;
+        $this->_setField('limit');
         return $this;
     }
 
@@ -232,6 +247,7 @@ class SearchCatalogItemsRequest extends JsonSerializableType
     public function setSortOrder(?string $value = null): self
     {
         $this->sortOrder = $value;
+        $this->_setField('sortOrder');
         return $this;
     }
 
@@ -249,6 +265,7 @@ class SearchCatalogItemsRequest extends JsonSerializableType
     public function setProductTypes(?array $value = null): self
     {
         $this->productTypes = $value;
+        $this->_setField('productTypes');
         return $this;
     }
 
@@ -266,6 +283,7 @@ class SearchCatalogItemsRequest extends JsonSerializableType
     public function setCustomAttributeFilters(?array $value = null): self
     {
         $this->customAttributeFilters = $value;
+        $this->_setField('customAttributeFilters');
         return $this;
     }
 
@@ -283,6 +301,25 @@ class SearchCatalogItemsRequest extends JsonSerializableType
     public function setArchivedState(?string $value = null): self
     {
         $this->archivedState = $value;
+        $this->_setField('archivedState');
+        return $this;
+    }
+
+    /**
+     * @return ?IncludeOptions
+     */
+    public function getIncludeOptions(): ?IncludeOptions
+    {
+        return $this->includeOptions;
+    }
+
+    /**
+     * @param ?IncludeOptions $value
+     */
+    public function setIncludeOptions(?IncludeOptions $value = null): self
+    {
+        $this->includeOptions = $value;
+        $this->_setField('includeOptions');
         return $this;
     }
 }

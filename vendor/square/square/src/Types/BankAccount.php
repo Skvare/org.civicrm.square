@@ -154,6 +154,12 @@ class BankAccount extends JsonSerializableType
     private ?string $bankName;
 
     /**
+     * @var ?string $customerId The ID of the customer who owns the bank account
+     */
+    #[JsonProperty('customer_id')]
+    private ?string $customerId;
+
+    /**
      * @param array{
      *   id: string,
      *   accountNumberSuffix: string,
@@ -172,6 +178,7 @@ class BankAccount extends JsonSerializableType
      *   fingerprint?: ?string,
      *   version?: ?int,
      *   bankName?: ?string,
+     *   customerId?: ?string,
      * } $values
      */
     public function __construct(
@@ -194,6 +201,7 @@ class BankAccount extends JsonSerializableType
         $this->fingerprint = $values['fingerprint'] ?? null;
         $this->version = $values['version'] ?? null;
         $this->bankName = $values['bankName'] ?? null;
+        $this->customerId = $values['customerId'] ?? null;
     }
 
     /**
@@ -210,6 +218,7 @@ class BankAccount extends JsonSerializableType
     public function setId(string $value): self
     {
         $this->id = $value;
+        $this->_setField('id');
         return $this;
     }
 
@@ -227,6 +236,7 @@ class BankAccount extends JsonSerializableType
     public function setAccountNumberSuffix(string $value): self
     {
         $this->accountNumberSuffix = $value;
+        $this->_setField('accountNumberSuffix');
         return $this;
     }
 
@@ -244,6 +254,7 @@ class BankAccount extends JsonSerializableType
     public function setCountry(string $value): self
     {
         $this->country = $value;
+        $this->_setField('country');
         return $this;
     }
 
@@ -261,6 +272,7 @@ class BankAccount extends JsonSerializableType
     public function setCurrency(string $value): self
     {
         $this->currency = $value;
+        $this->_setField('currency');
         return $this;
     }
 
@@ -278,6 +290,7 @@ class BankAccount extends JsonSerializableType
     public function setAccountType(string $value): self
     {
         $this->accountType = $value;
+        $this->_setField('accountType');
         return $this;
     }
 
@@ -295,6 +308,7 @@ class BankAccount extends JsonSerializableType
     public function setHolderName(string $value): self
     {
         $this->holderName = $value;
+        $this->_setField('holderName');
         return $this;
     }
 
@@ -312,6 +326,7 @@ class BankAccount extends JsonSerializableType
     public function setPrimaryBankIdentificationNumber(string $value): self
     {
         $this->primaryBankIdentificationNumber = $value;
+        $this->_setField('primaryBankIdentificationNumber');
         return $this;
     }
 
@@ -329,6 +344,7 @@ class BankAccount extends JsonSerializableType
     public function setSecondaryBankIdentificationNumber(?string $value = null): self
     {
         $this->secondaryBankIdentificationNumber = $value;
+        $this->_setField('secondaryBankIdentificationNumber');
         return $this;
     }
 
@@ -346,6 +362,7 @@ class BankAccount extends JsonSerializableType
     public function setDebitMandateReferenceId(?string $value = null): self
     {
         $this->debitMandateReferenceId = $value;
+        $this->_setField('debitMandateReferenceId');
         return $this;
     }
 
@@ -363,6 +380,7 @@ class BankAccount extends JsonSerializableType
     public function setReferenceId(?string $value = null): self
     {
         $this->referenceId = $value;
+        $this->_setField('referenceId');
         return $this;
     }
 
@@ -380,6 +398,7 @@ class BankAccount extends JsonSerializableType
     public function setLocationId(?string $value = null): self
     {
         $this->locationId = $value;
+        $this->_setField('locationId');
         return $this;
     }
 
@@ -397,6 +416,7 @@ class BankAccount extends JsonSerializableType
     public function setStatus(string $value): self
     {
         $this->status = $value;
+        $this->_setField('status');
         return $this;
     }
 
@@ -414,6 +434,7 @@ class BankAccount extends JsonSerializableType
     public function setCreditable(bool $value): self
     {
         $this->creditable = $value;
+        $this->_setField('creditable');
         return $this;
     }
 
@@ -431,6 +452,7 @@ class BankAccount extends JsonSerializableType
     public function setDebitable(bool $value): self
     {
         $this->debitable = $value;
+        $this->_setField('debitable');
         return $this;
     }
 
@@ -448,6 +470,7 @@ class BankAccount extends JsonSerializableType
     public function setFingerprint(?string $value = null): self
     {
         $this->fingerprint = $value;
+        $this->_setField('fingerprint');
         return $this;
     }
 
@@ -465,6 +488,7 @@ class BankAccount extends JsonSerializableType
     public function setVersion(?int $value = null): self
     {
         $this->version = $value;
+        $this->_setField('version');
         return $this;
     }
 
@@ -482,6 +506,25 @@ class BankAccount extends JsonSerializableType
     public function setBankName(?string $value = null): self
     {
         $this->bankName = $value;
+        $this->_setField('bankName');
+        return $this;
+    }
+
+    /**
+     * @return ?string
+     */
+    public function getCustomerId(): ?string
+    {
+        return $this->customerId;
+    }
+
+    /**
+     * @param ?string $value
+     */
+    public function setCustomerId(?string $value = null): self
+    {
+        $this->customerId = $value;
+        $this->_setField('customerId');
         return $this;
     }
 

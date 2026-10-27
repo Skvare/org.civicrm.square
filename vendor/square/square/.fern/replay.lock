@@ -1,0 +1,34 @@
+# DO NOT EDIT MANUALLY - Managed by Fern Replay
+version: "1.0"
+generations:
+  - commit_sha: d62b84d994b80d7a4e31128be4970c153b102e7c
+    tree_hash: 7f58b8d3c3e4612c20081a1ffa9b7d6ee721bec4
+    timestamp: 2026-05-19T21:15:19.797Z
+    cli_version: unknown
+    generator_versions: {}
+  - commit_sha: 5f33bef37d47ae514ce417bb27e1aad232f269c2
+    tree_hash: 8199b765565a95cd970ea13691e2f82c392041b0
+    timestamp: 2026-07-14T16:57:30.288Z
+    cli_version: unknown
+    generator_versions:
+      fernapi/fern-php-sdk: 2.1.5
+  - commit_sha: 85c6db69b135f06bd19e8850faeff3d9e319adb4
+    tree_hash: 46de7d271e0188b84d428750c9191478ccb1d930
+    timestamp: 2026-08-18T17:45:41.503Z
+    cli_version: unknown
+    generator_versions:
+      fernapi/fern-php-sdk: 2.1.5
+  - commit_sha: 0ba6f5e051ee942bbefed88fff34a9f2522db25b
+    tree_hash: bbc1e03c7cb411f6f72452607615611bfbd423a5
+    timestamp: 2026-08-18T20:52:23.974Z
+    cli_version: unknown
+    generator_versions:
+      fernapi/fern-php-sdk: 2.1.5
+  - commit_sha: d18d740da547dcc3cecbc5eedf95ce9e1b07387d
+    tree_hash: 07fdf09287190f8174ee19f351f54cf132e92595
+    timestamp: 2026-09-15T18:44:04.667Z
+    cli_version: unknown
+    generator_versions:
+      fernapi/fern-php-sdk: 2.1.5
+current_generation: d18d740da547dcc3cecbc5eedf95ce9e1b07387d
+patches: []

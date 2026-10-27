@@ -59,6 +59,12 @@ class CatalogItem extends JsonSerializableType
     private ?string $categoryId;
 
     /**
+     * @var ?string $buyerFacingName The override to a product name to display to users
+     */
+    #[JsonProperty('buyer_facing_name')]
+    private ?string $buyerFacingName;
+
+    /**
      * A set of IDs indicating the taxes enabled for
      * this item. When updating an item, any taxes listed here will be added to the item.
      * Taxes may also be added to or deleted from an item using `UpdateItemTaxes`.
@@ -160,7 +166,10 @@ class CatalogItem extends JsonSerializableType
     private ?string $sortName;
 
     /**
-     * @var ?array<CatalogObjectCategory> $categories The list of categories.
+     * The list of categories to which this item belongs. Each entry includes the category ID and an ordinal
+     * value that determines the item's relative position within that category.
+     *
+     * @var ?array<CatalogObjectCategory> $categories
      */
     #[JsonProperty('categories'), ArrayType([CatalogObjectCategory::class])]
     private ?array $categories;
@@ -201,6 +210,17 @@ class CatalogItem extends JsonSerializableType
      */
     #[JsonProperty('description_plaintext')]
     private ?string $descriptionPlaintext;
+
+    /**
+     * (Optional) Name that the restaurant wants to display to their kitchen workers
+     * instead of the customer-facing name.
+     * e.g., customer name might be "Big John's Mega Burger" and the
+     * kitchen name is "12oz beef burger"
+     *
+     * @var ?string $kitchenName
+     */
+    #[JsonProperty('kitchen_name')]
+    private ?string $kitchenName;
 
     /**
      * A list of IDs representing channels, such as a Square Online site, where the item can be made visible or available.
@@ -249,6 +269,7 @@ class CatalogItem extends JsonSerializableType
      *   labelColor?: ?string,
      *   isTaxable?: ?bool,
      *   categoryId?: ?string,
+     *   buyerFacingName?: ?string,
      *   taxIds?: ?array<string>,
      *   modifierListInfo?: ?array<CatalogItemModifierListInfo>,
      *   variations?: ?array<CatalogObject>,
@@ -262,6 +283,7 @@ class CatalogItem extends JsonSerializableType
      *   categories?: ?array<CatalogObjectCategory>,
      *   descriptionHtml?: ?string,
      *   descriptionPlaintext?: ?string,
+     *   kitchenName?: ?string,
      *   channels?: ?array<string>,
      *   isArchived?: ?bool,
      *   ecomSeoData?: ?CatalogEcomSeoData,
@@ -279,6 +301,7 @@ class CatalogItem extends JsonSerializableType
         $this->labelColor = $values['labelColor'] ?? null;
         $this->isTaxable = $values['isTaxable'] ?? null;
         $this->categoryId = $values['categoryId'] ?? null;
+        $this->buyerFacingName = $values['buyerFacingName'] ?? null;
         $this->taxIds = $values['taxIds'] ?? null;
         $this->modifierListInfo = $values['modifierListInfo'] ?? null;
         $this->variations = $values['variations'] ?? null;
@@ -292,6 +315,7 @@ class CatalogItem extends JsonSerializableType
         $this->categories = $values['categories'] ?? null;
         $this->descriptionHtml = $values['descriptionHtml'] ?? null;
         $this->descriptionPlaintext = $values['descriptionPlaintext'] ?? null;
+        $this->kitchenName = $values['kitchenName'] ?? null;
         $this->channels = $values['channels'] ?? null;
         $this->isArchived = $values['isArchived'] ?? null;
         $this->ecomSeoData = $values['ecomSeoData'] ?? null;
@@ -314,6 +338,7 @@ class CatalogItem extends JsonSerializableType
     public function setName(?string $value = null): self
     {
         $this->name = $value;
+        $this->_setField('name');
         return $this;
     }
 
@@ -331,6 +356,7 @@ class CatalogItem extends JsonSerializableType
     public function setDescription(?string $value = null): self
     {
         $this->description = $value;
+        $this->_setField('description');
         return $this;
     }
 
@@ -348,6 +374,7 @@ class CatalogItem extends JsonSerializableType
     public function setAbbreviation(?string $value = null): self
     {
         $this->abbreviation = $value;
+        $this->_setField('abbreviation');
         return $this;
     }
 
@@ -365,6 +392,7 @@ class CatalogItem extends JsonSerializableType
     public function setLabelColor(?string $value = null): self
     {
         $this->labelColor = $value;
+        $this->_setField('labelColor');
         return $this;
     }
 
@@ -382,6 +410,7 @@ class CatalogItem extends JsonSerializableType
     public function setIsTaxable(?bool $value = null): self
     {
         $this->isTaxable = $value;
+        $this->_setField('isTaxable');
         return $this;
     }
 
@@ -399,6 +428,25 @@ class CatalogItem extends JsonSerializableType
     public function setCategoryId(?string $value = null): self
     {
         $this->categoryId = $value;
+        $this->_setField('categoryId');
+        return $this;
+    }
+
+    /**
+     * @return ?string
+     */
+    public function getBuyerFacingName(): ?string
+    {
+        return $this->buyerFacingName;
+    }
+
+    /**
+     * @param ?string $value
+     */
+    public function setBuyerFacingName(?string $value = null): self
+    {
+        $this->buyerFacingName = $value;
+        $this->_setField('buyerFacingName');
         return $this;
     }
 
@@ -416,6 +464,7 @@ class CatalogItem extends JsonSerializableType
     public function setTaxIds(?array $value = null): self
     {
         $this->taxIds = $value;
+        $this->_setField('taxIds');
         return $this;
     }
 
@@ -433,6 +482,7 @@ class CatalogItem extends JsonSerializableType
     public function setModifierListInfo(?array $value = null): self
     {
         $this->modifierListInfo = $value;
+        $this->_setField('modifierListInfo');
         return $this;
     }
 
@@ -450,6 +500,7 @@ class CatalogItem extends JsonSerializableType
     public function setVariations(?array $value = null): self
     {
         $this->variations = $value;
+        $this->_setField('variations');
         return $this;
     }
 
@@ -467,6 +518,7 @@ class CatalogItem extends JsonSerializableType
     public function setProductType(?string $value = null): self
     {
         $this->productType = $value;
+        $this->_setField('productType');
         return $this;
     }
 
@@ -484,6 +536,7 @@ class CatalogItem extends JsonSerializableType
     public function setSkipModifierScreen(?bool $value = null): self
     {
         $this->skipModifierScreen = $value;
+        $this->_setField('skipModifierScreen');
         return $this;
     }
 
@@ -501,6 +554,7 @@ class CatalogItem extends JsonSerializableType
     public function setItemOptions(?array $value = null): self
     {
         $this->itemOptions = $value;
+        $this->_setField('itemOptions');
         return $this;
     }
 
@@ -518,6 +572,7 @@ class CatalogItem extends JsonSerializableType
     public function setEcomUri(?string $value = null): self
     {
         $this->ecomUri = $value;
+        $this->_setField('ecomUri');
         return $this;
     }
 
@@ -535,6 +590,7 @@ class CatalogItem extends JsonSerializableType
     public function setEcomImageUris(?array $value = null): self
     {
         $this->ecomImageUris = $value;
+        $this->_setField('ecomImageUris');
         return $this;
     }
 
@@ -552,6 +608,7 @@ class CatalogItem extends JsonSerializableType
     public function setImageIds(?array $value = null): self
     {
         $this->imageIds = $value;
+        $this->_setField('imageIds');
         return $this;
     }
 
@@ -569,6 +626,7 @@ class CatalogItem extends JsonSerializableType
     public function setSortName(?string $value = null): self
     {
         $this->sortName = $value;
+        $this->_setField('sortName');
         return $this;
     }
 
@@ -586,6 +644,7 @@ class CatalogItem extends JsonSerializableType
     public function setCategories(?array $value = null): self
     {
         $this->categories = $value;
+        $this->_setField('categories');
         return $this;
     }
 
@@ -603,6 +662,7 @@ class CatalogItem extends JsonSerializableType
     public function setDescriptionHtml(?string $value = null): self
     {
         $this->descriptionHtml = $value;
+        $this->_setField('descriptionHtml');
         return $this;
     }
 
@@ -620,6 +680,25 @@ class CatalogItem extends JsonSerializableType
     public function setDescriptionPlaintext(?string $value = null): self
     {
         $this->descriptionPlaintext = $value;
+        $this->_setField('descriptionPlaintext');
+        return $this;
+    }
+
+    /**
+     * @return ?string
+     */
+    public function getKitchenName(): ?string
+    {
+        return $this->kitchenName;
+    }
+
+    /**
+     * @param ?string $value
+     */
+    public function setKitchenName(?string $value = null): self
+    {
+        $this->kitchenName = $value;
+        $this->_setField('kitchenName');
         return $this;
     }
 
@@ -637,6 +716,7 @@ class CatalogItem extends JsonSerializableType
     public function setChannels(?array $value = null): self
     {
         $this->channels = $value;
+        $this->_setField('channels');
         return $this;
     }
 
@@ -654,6 +734,7 @@ class CatalogItem extends JsonSerializableType
     public function setIsArchived(?bool $value = null): self
     {
         $this->isArchived = $value;
+        $this->_setField('isArchived');
         return $this;
     }
 
@@ -671,6 +752,7 @@ class CatalogItem extends JsonSerializableType
     public function setEcomSeoData(?CatalogEcomSeoData $value = null): self
     {
         $this->ecomSeoData = $value;
+        $this->_setField('ecomSeoData');
         return $this;
     }
 
@@ -688,6 +770,7 @@ class CatalogItem extends JsonSerializableType
     public function setFoodAndBeverageDetails(?CatalogItemFoodAndBeverageDetails $value = null): self
     {
         $this->foodAndBeverageDetails = $value;
+        $this->_setField('foodAndBeverageDetails');
         return $this;
     }
 
@@ -705,6 +788,7 @@ class CatalogItem extends JsonSerializableType
     public function setReportingCategory(?CatalogObjectCategory $value = null): self
     {
         $this->reportingCategory = $value;
+        $this->_setField('reportingCategory');
         return $this;
     }
 
@@ -722,6 +806,7 @@ class CatalogItem extends JsonSerializableType
     public function setIsAlcoholic(?bool $value = null): self
     {
         $this->isAlcoholic = $value;
+        $this->_setField('isAlcoholic');
         return $this;
     }
 

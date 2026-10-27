@@ -117,6 +117,12 @@ class CatalogQuery extends JsonSerializableType
     private ?CatalogQueryItemVariationsForItemOptionValues $itemVariationsForItemOptionValuesQuery;
 
     /**
+     * @var ?CatalogQueryModifiersForChildList $modifiersForChildListQuery A query expression to return `CatalogModifier` objects that nest the specified modifier lists (via `child_modifier_list_ids`)
+     */
+    #[JsonProperty('modifiers_for_child_list_query')]
+    private ?CatalogQueryModifiersForChildList $modifiersForChildListQuery;
+
+    /**
      * @param array{
      *   sortedAttributeQuery?: ?CatalogQuerySortedAttribute,
      *   exactQuery?: ?CatalogQueryExact,
@@ -128,6 +134,7 @@ class CatalogQuery extends JsonSerializableType
      *   itemsForModifierListQuery?: ?CatalogQueryItemsForModifierList,
      *   itemsForItemOptionsQuery?: ?CatalogQueryItemsForItemOptions,
      *   itemVariationsForItemOptionValuesQuery?: ?CatalogQueryItemVariationsForItemOptionValues,
+     *   modifiersForChildListQuery?: ?CatalogQueryModifiersForChildList,
      * } $values
      */
     public function __construct(
@@ -143,6 +150,7 @@ class CatalogQuery extends JsonSerializableType
         $this->itemsForModifierListQuery = $values['itemsForModifierListQuery'] ?? null;
         $this->itemsForItemOptionsQuery = $values['itemsForItemOptionsQuery'] ?? null;
         $this->itemVariationsForItemOptionValuesQuery = $values['itemVariationsForItemOptionValuesQuery'] ?? null;
+        $this->modifiersForChildListQuery = $values['modifiersForChildListQuery'] ?? null;
     }
 
     /**
@@ -159,6 +167,7 @@ class CatalogQuery extends JsonSerializableType
     public function setSortedAttributeQuery(?CatalogQuerySortedAttribute $value = null): self
     {
         $this->sortedAttributeQuery = $value;
+        $this->_setField('sortedAttributeQuery');
         return $this;
     }
 
@@ -176,6 +185,7 @@ class CatalogQuery extends JsonSerializableType
     public function setExactQuery(?CatalogQueryExact $value = null): self
     {
         $this->exactQuery = $value;
+        $this->_setField('exactQuery');
         return $this;
     }
 
@@ -193,6 +203,7 @@ class CatalogQuery extends JsonSerializableType
     public function setSetQuery(?CatalogQuerySet $value = null): self
     {
         $this->setQuery = $value;
+        $this->_setField('setQuery');
         return $this;
     }
 
@@ -210,6 +221,7 @@ class CatalogQuery extends JsonSerializableType
     public function setPrefixQuery(?CatalogQueryPrefix $value = null): self
     {
         $this->prefixQuery = $value;
+        $this->_setField('prefixQuery');
         return $this;
     }
 
@@ -227,6 +239,7 @@ class CatalogQuery extends JsonSerializableType
     public function setRangeQuery(?CatalogQueryRange $value = null): self
     {
         $this->rangeQuery = $value;
+        $this->_setField('rangeQuery');
         return $this;
     }
 
@@ -244,6 +257,7 @@ class CatalogQuery extends JsonSerializableType
     public function setTextQuery(?CatalogQueryText $value = null): self
     {
         $this->textQuery = $value;
+        $this->_setField('textQuery');
         return $this;
     }
 
@@ -261,6 +275,7 @@ class CatalogQuery extends JsonSerializableType
     public function setItemsForTaxQuery(?CatalogQueryItemsForTax $value = null): self
     {
         $this->itemsForTaxQuery = $value;
+        $this->_setField('itemsForTaxQuery');
         return $this;
     }
 
@@ -278,6 +293,7 @@ class CatalogQuery extends JsonSerializableType
     public function setItemsForModifierListQuery(?CatalogQueryItemsForModifierList $value = null): self
     {
         $this->itemsForModifierListQuery = $value;
+        $this->_setField('itemsForModifierListQuery');
         return $this;
     }
 
@@ -295,6 +311,7 @@ class CatalogQuery extends JsonSerializableType
     public function setItemsForItemOptionsQuery(?CatalogQueryItemsForItemOptions $value = null): self
     {
         $this->itemsForItemOptionsQuery = $value;
+        $this->_setField('itemsForItemOptionsQuery');
         return $this;
     }
 
@@ -312,6 +329,25 @@ class CatalogQuery extends JsonSerializableType
     public function setItemVariationsForItemOptionValuesQuery(?CatalogQueryItemVariationsForItemOptionValues $value = null): self
     {
         $this->itemVariationsForItemOptionValuesQuery = $value;
+        $this->_setField('itemVariationsForItemOptionValuesQuery');
+        return $this;
+    }
+
+    /**
+     * @return ?CatalogQueryModifiersForChildList
+     */
+    public function getModifiersForChildListQuery(): ?CatalogQueryModifiersForChildList
+    {
+        return $this->modifiersForChildListQuery;
+    }
+
+    /**
+     * @param ?CatalogQueryModifiersForChildList $value
+     */
+    public function setModifiersForChildListQuery(?CatalogQueryModifiersForChildList $value = null): self
+    {
+        $this->modifiersForChildListQuery = $value;
+        $this->_setField('modifiersForChildListQuery');
         return $this;
     }
 

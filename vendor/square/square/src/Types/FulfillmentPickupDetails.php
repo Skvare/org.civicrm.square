@@ -32,8 +32,9 @@ class FulfillmentPickupDetails extends JsonSerializableType
     private ?string $expiresAt;
 
     /**
-     * The duration of time after which an in progress pickup fulfillment is automatically moved
-     * to the `COMPLETED` state. The duration must be in RFC 3339 format (for example, "P1W3D").
+     * The [duration](https://developer.squareup.com/docs/build-basics/working-with-dates)
+     * after which an in-progress pickup fulfillment is automatically moved
+     * to the `COMPLETED` state. The duration must be in RFC 3339 format (for example, "PT4H" for 4 hours).
      *
      * If not set, this pickup fulfillment remains in progress until it is canceled or completed.
      *
@@ -57,7 +58,7 @@ class FulfillmentPickupDetails extends JsonSerializableType
      * "2016-09-04T23:59:33.123Z".
      *
      * For fulfillments with the schedule type `ASAP`, this is automatically set
-     * to the current time plus the expected duration to prepare the fulfillment.
+     * to the current time plus `prep_time_duration`, if available.
      *
      * @var ?string $pickupAt
      */
@@ -65,9 +66,12 @@ class FulfillmentPickupDetails extends JsonSerializableType
     private ?string $pickupAt;
 
     /**
-     * The window of time in which the order should be picked up after the `pickup_at` timestamp.
-     * Must be in RFC 3339 duration format, e.g., "P1W3D". Can be used as an
-     * informational guideline for merchants.
+     * The [duration](https://developer.squareup.com/docs/build-basics/working-with-dates)
+     * in which the order should be picked up after the `pickup_at` timestamp.
+     * The duration must be in RFC 3339 format (for example, "PT30M" for 30 minutes). Don't confuse
+     * "M" for months with "M" for minutes. "P5M" means 5 months, while "PT5M" means 5 minutes.
+     *
+     * Can be used as an informational guideline for merchants.
      *
      * @var ?string $pickupWindowDuration
      */
@@ -75,8 +79,10 @@ class FulfillmentPickupDetails extends JsonSerializableType
     private ?string $pickupWindowDuration;
 
     /**
-     * The duration of time it takes to prepare this fulfillment.
-     * The duration must be in RFC 3339 format (for example, "P1W3D").
+     * The [duration](https://developer.squareup.com/docs/build-basics/working-with-dates)
+     * needed to prepare this fulfillment.
+     * The duration must be in RFC 3339 format (for example, "PT30M" for 30 minutes). Don't confuse
+     * "M" for months with "M" for minutes. "P5M" means 5 months, while "PT5M" means 5 minutes.
      *
      * @var ?string $prepTimeDuration
      */
@@ -239,6 +245,7 @@ class FulfillmentPickupDetails extends JsonSerializableType
     public function setRecipient(?FulfillmentRecipient $value = null): self
     {
         $this->recipient = $value;
+        $this->_setField('recipient');
         return $this;
     }
 
@@ -256,6 +263,7 @@ class FulfillmentPickupDetails extends JsonSerializableType
     public function setExpiresAt(?string $value = null): self
     {
         $this->expiresAt = $value;
+        $this->_setField('expiresAt');
         return $this;
     }
 
@@ -273,6 +281,7 @@ class FulfillmentPickupDetails extends JsonSerializableType
     public function setAutoCompleteDuration(?string $value = null): self
     {
         $this->autoCompleteDuration = $value;
+        $this->_setField('autoCompleteDuration');
         return $this;
     }
 
@@ -290,6 +299,7 @@ class FulfillmentPickupDetails extends JsonSerializableType
     public function setScheduleType(?string $value = null): self
     {
         $this->scheduleType = $value;
+        $this->_setField('scheduleType');
         return $this;
     }
 
@@ -307,6 +317,7 @@ class FulfillmentPickupDetails extends JsonSerializableType
     public function setPickupAt(?string $value = null): self
     {
         $this->pickupAt = $value;
+        $this->_setField('pickupAt');
         return $this;
     }
 
@@ -324,6 +335,7 @@ class FulfillmentPickupDetails extends JsonSerializableType
     public function setPickupWindowDuration(?string $value = null): self
     {
         $this->pickupWindowDuration = $value;
+        $this->_setField('pickupWindowDuration');
         return $this;
     }
 
@@ -341,6 +353,7 @@ class FulfillmentPickupDetails extends JsonSerializableType
     public function setPrepTimeDuration(?string $value = null): self
     {
         $this->prepTimeDuration = $value;
+        $this->_setField('prepTimeDuration');
         return $this;
     }
 
@@ -358,6 +371,7 @@ class FulfillmentPickupDetails extends JsonSerializableType
     public function setNote(?string $value = null): self
     {
         $this->note = $value;
+        $this->_setField('note');
         return $this;
     }
 
@@ -375,6 +389,7 @@ class FulfillmentPickupDetails extends JsonSerializableType
     public function setPlacedAt(?string $value = null): self
     {
         $this->placedAt = $value;
+        $this->_setField('placedAt');
         return $this;
     }
 
@@ -392,6 +407,7 @@ class FulfillmentPickupDetails extends JsonSerializableType
     public function setAcceptedAt(?string $value = null): self
     {
         $this->acceptedAt = $value;
+        $this->_setField('acceptedAt');
         return $this;
     }
 
@@ -409,6 +425,7 @@ class FulfillmentPickupDetails extends JsonSerializableType
     public function setRejectedAt(?string $value = null): self
     {
         $this->rejectedAt = $value;
+        $this->_setField('rejectedAt');
         return $this;
     }
 
@@ -426,6 +443,7 @@ class FulfillmentPickupDetails extends JsonSerializableType
     public function setReadyAt(?string $value = null): self
     {
         $this->readyAt = $value;
+        $this->_setField('readyAt');
         return $this;
     }
 
@@ -443,6 +461,7 @@ class FulfillmentPickupDetails extends JsonSerializableType
     public function setExpiredAt(?string $value = null): self
     {
         $this->expiredAt = $value;
+        $this->_setField('expiredAt');
         return $this;
     }
 
@@ -460,6 +479,7 @@ class FulfillmentPickupDetails extends JsonSerializableType
     public function setPickedUpAt(?string $value = null): self
     {
         $this->pickedUpAt = $value;
+        $this->_setField('pickedUpAt');
         return $this;
     }
 
@@ -477,6 +497,7 @@ class FulfillmentPickupDetails extends JsonSerializableType
     public function setCanceledAt(?string $value = null): self
     {
         $this->canceledAt = $value;
+        $this->_setField('canceledAt');
         return $this;
     }
 
@@ -494,6 +515,7 @@ class FulfillmentPickupDetails extends JsonSerializableType
     public function setCancelReason(?string $value = null): self
     {
         $this->cancelReason = $value;
+        $this->_setField('cancelReason');
         return $this;
     }
 
@@ -511,6 +533,7 @@ class FulfillmentPickupDetails extends JsonSerializableType
     public function setIsCurbsidePickup(?bool $value = null): self
     {
         $this->isCurbsidePickup = $value;
+        $this->_setField('isCurbsidePickup');
         return $this;
     }
 
@@ -528,6 +551,7 @@ class FulfillmentPickupDetails extends JsonSerializableType
     public function setCurbsidePickupDetails(?FulfillmentPickupDetailsCurbsidePickupDetails $value = null): self
     {
         $this->curbsidePickupDetails = $value;
+        $this->_setField('curbsidePickupDetails');
         return $this;
     }
 

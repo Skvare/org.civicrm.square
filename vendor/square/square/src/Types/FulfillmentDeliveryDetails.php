@@ -18,7 +18,7 @@ class FulfillmentDeliveryDetails extends JsonSerializableType
 
     /**
      * Indicates the fulfillment delivery schedule type. If `SCHEDULED`, then
-     * `deliver_at` is required. If `ASAP`, then `prep_time_duration` is required. The default is `SCHEDULED`.
+     * `deliver_at` is required. The default is `SCHEDULED`.
      * See [OrderFulfillmentDeliveryDetailsScheduleType](#type-orderfulfillmentdeliverydetailsscheduletype) for possible values
      *
      * @var ?value-of<FulfillmentDeliveryDetailsOrderFulfillmentDeliveryDetailsScheduleType> $scheduleType
@@ -41,14 +41,15 @@ class FulfillmentDeliveryDetails extends JsonSerializableType
     /**
      * The [timestamp](https://developer.squareup.com/docs/build-basics/working-with-dates)
      * that represents the start of the delivery period.
-     * When the fulfillment `schedule_type` is `ASAP`, the field is automatically
-     * set to the current time plus the `prep_time_duration`.
-     * Otherwise, the application can set this field while the fulfillment `state` is
+     * The application can set this field while the fulfillment `state` is
      * `PROPOSED`, `RESERVED`, or `PREPARED` (any time before the
      * terminal state such as `COMPLETED`, `CANCELED`, and `FAILED`).
      *
      * The timestamp must be in RFC 3339 format
      * (for example, "2016-09-04T23:59:33.123Z").
+     *
+     * For fulfillments with the schedule type `ASAP`, this is automatically set
+     * to the current time plus `prep_time_duration`, if available.
      *
      * @var ?string $deliverAt
      */
@@ -56,8 +57,10 @@ class FulfillmentDeliveryDetails extends JsonSerializableType
     private ?string $deliverAt;
 
     /**
-     * The duration of time it takes to prepare and deliver this fulfillment.
-     * The duration must be in RFC 3339 format (for example, "P1W3D").
+     * The [duration](https://developer.squareup.com/docs/build-basics/working-with-dates)
+     * needed to prepare and deliver this fulfillment.
+     * The duration must be in RFC 3339 format (for example, "PT30M" for 30 minutes). Don't confuse
+     * "M" for months with "M" for minutes. "P5M" means 5 months, while "PT5M" means 5 minutes.
      *
      * @var ?string $prepTimeDuration
      */
@@ -65,12 +68,14 @@ class FulfillmentDeliveryDetails extends JsonSerializableType
     private ?string $prepTimeDuration;
 
     /**
-     * The time period after `deliver_at` in which to deliver the order.
+     * The [duration](https://developer.squareup.com/docs/build-basics/working-with-dates)
+     * after `deliver_at` in which to deliver the order.
      * Applications can set this field when the fulfillment `state` is
      * `PROPOSED`, `RESERVED`, or `PREPARED` (any time before the terminal state
      * such as `COMPLETED`, `CANCELED`, and `FAILED`).
      *
-     * The duration must be in RFC 3339 format (for example, "P1W3D").
+     * The duration must be in RFC 3339 format (for example, "PT30M" for 30 minutes). Don't confuse
+     * "M" for months with "M" for minutes. "P5M" means 5 months, while "PT5M" means 5 minutes.
      *
      * @var ?string $deliveryWindowDuration
      */
@@ -170,8 +175,10 @@ class FulfillmentDeliveryDetails extends JsonSerializableType
     private ?string $courierPickupAt;
 
     /**
-     * The time period after `courier_pickup_at` in which the courier should pick up the order.
-     * The duration must be in RFC 3339 format (for example, "P1W3D").
+     * The [duration](https://developer.squareup.com/docs/build-basics/working-with-dates)
+     * after `courier_pickup_at` in which the courier should pick up the order.
+     * The duration must be in RFC 3339 format (for example, "PT30M" for 30 minutes). Don't confuse
+     * "M" for months with "M" for minutes. "P5M" means 5 months, while "PT5M" means 5 minutes.
      *
      * @var ?string $courierPickupWindowDuration
      */
@@ -292,6 +299,7 @@ class FulfillmentDeliveryDetails extends JsonSerializableType
     public function setRecipient(?FulfillmentRecipient $value = null): self
     {
         $this->recipient = $value;
+        $this->_setField('recipient');
         return $this;
     }
 
@@ -309,6 +317,7 @@ class FulfillmentDeliveryDetails extends JsonSerializableType
     public function setScheduleType(?string $value = null): self
     {
         $this->scheduleType = $value;
+        $this->_setField('scheduleType');
         return $this;
     }
 
@@ -326,6 +335,7 @@ class FulfillmentDeliveryDetails extends JsonSerializableType
     public function setPlacedAt(?string $value = null): self
     {
         $this->placedAt = $value;
+        $this->_setField('placedAt');
         return $this;
     }
 
@@ -343,6 +353,7 @@ class FulfillmentDeliveryDetails extends JsonSerializableType
     public function setDeliverAt(?string $value = null): self
     {
         $this->deliverAt = $value;
+        $this->_setField('deliverAt');
         return $this;
     }
 
@@ -360,6 +371,7 @@ class FulfillmentDeliveryDetails extends JsonSerializableType
     public function setPrepTimeDuration(?string $value = null): self
     {
         $this->prepTimeDuration = $value;
+        $this->_setField('prepTimeDuration');
         return $this;
     }
 
@@ -377,6 +389,7 @@ class FulfillmentDeliveryDetails extends JsonSerializableType
     public function setDeliveryWindowDuration(?string $value = null): self
     {
         $this->deliveryWindowDuration = $value;
+        $this->_setField('deliveryWindowDuration');
         return $this;
     }
 
@@ -394,6 +407,7 @@ class FulfillmentDeliveryDetails extends JsonSerializableType
     public function setNote(?string $value = null): self
     {
         $this->note = $value;
+        $this->_setField('note');
         return $this;
     }
 
@@ -411,6 +425,7 @@ class FulfillmentDeliveryDetails extends JsonSerializableType
     public function setCompletedAt(?string $value = null): self
     {
         $this->completedAt = $value;
+        $this->_setField('completedAt');
         return $this;
     }
 
@@ -428,6 +443,7 @@ class FulfillmentDeliveryDetails extends JsonSerializableType
     public function setInProgressAt(?string $value = null): self
     {
         $this->inProgressAt = $value;
+        $this->_setField('inProgressAt');
         return $this;
     }
 
@@ -445,6 +461,7 @@ class FulfillmentDeliveryDetails extends JsonSerializableType
     public function setRejectedAt(?string $value = null): self
     {
         $this->rejectedAt = $value;
+        $this->_setField('rejectedAt');
         return $this;
     }
 
@@ -462,6 +479,7 @@ class FulfillmentDeliveryDetails extends JsonSerializableType
     public function setReadyAt(?string $value = null): self
     {
         $this->readyAt = $value;
+        $this->_setField('readyAt');
         return $this;
     }
 
@@ -479,6 +497,7 @@ class FulfillmentDeliveryDetails extends JsonSerializableType
     public function setDeliveredAt(?string $value = null): self
     {
         $this->deliveredAt = $value;
+        $this->_setField('deliveredAt');
         return $this;
     }
 
@@ -496,6 +515,7 @@ class FulfillmentDeliveryDetails extends JsonSerializableType
     public function setCanceledAt(?string $value = null): self
     {
         $this->canceledAt = $value;
+        $this->_setField('canceledAt');
         return $this;
     }
 
@@ -513,6 +533,7 @@ class FulfillmentDeliveryDetails extends JsonSerializableType
     public function setCancelReason(?string $value = null): self
     {
         $this->cancelReason = $value;
+        $this->_setField('cancelReason');
         return $this;
     }
 
@@ -530,6 +551,7 @@ class FulfillmentDeliveryDetails extends JsonSerializableType
     public function setCourierPickupAt(?string $value = null): self
     {
         $this->courierPickupAt = $value;
+        $this->_setField('courierPickupAt');
         return $this;
     }
 
@@ -547,6 +569,7 @@ class FulfillmentDeliveryDetails extends JsonSerializableType
     public function setCourierPickupWindowDuration(?string $value = null): self
     {
         $this->courierPickupWindowDuration = $value;
+        $this->_setField('courierPickupWindowDuration');
         return $this;
     }
 
@@ -564,6 +587,7 @@ class FulfillmentDeliveryDetails extends JsonSerializableType
     public function setIsNoContactDelivery(?bool $value = null): self
     {
         $this->isNoContactDelivery = $value;
+        $this->_setField('isNoContactDelivery');
         return $this;
     }
 
@@ -581,6 +605,7 @@ class FulfillmentDeliveryDetails extends JsonSerializableType
     public function setDropoffNotes(?string $value = null): self
     {
         $this->dropoffNotes = $value;
+        $this->_setField('dropoffNotes');
         return $this;
     }
 
@@ -598,6 +623,7 @@ class FulfillmentDeliveryDetails extends JsonSerializableType
     public function setCourierProviderName(?string $value = null): self
     {
         $this->courierProviderName = $value;
+        $this->_setField('courierProviderName');
         return $this;
     }
 
@@ -615,6 +641,7 @@ class FulfillmentDeliveryDetails extends JsonSerializableType
     public function setCourierSupportPhoneNumber(?string $value = null): self
     {
         $this->courierSupportPhoneNumber = $value;
+        $this->_setField('courierSupportPhoneNumber');
         return $this;
     }
 
@@ -632,6 +659,7 @@ class FulfillmentDeliveryDetails extends JsonSerializableType
     public function setSquareDeliveryId(?string $value = null): self
     {
         $this->squareDeliveryId = $value;
+        $this->_setField('squareDeliveryId');
         return $this;
     }
 
@@ -649,6 +677,7 @@ class FulfillmentDeliveryDetails extends JsonSerializableType
     public function setExternalDeliveryId(?string $value = null): self
     {
         $this->externalDeliveryId = $value;
+        $this->_setField('externalDeliveryId');
         return $this;
     }
 
@@ -666,6 +695,7 @@ class FulfillmentDeliveryDetails extends JsonSerializableType
     public function setManagedDelivery(?bool $value = null): self
     {
         $this->managedDelivery = $value;
+        $this->_setField('managedDelivery');
         return $this;
     }
 

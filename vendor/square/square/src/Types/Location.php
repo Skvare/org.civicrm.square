@@ -220,6 +220,24 @@ class Location extends JsonSerializableType
     private ?TaxIds $taxIds;
 
     /**
+     * The custom text that appears on receipts issued for this location.
+     * This text can also be configured in the Seller Dashboard (Receipts section).
+     *
+     * @var ?string $customReceiptText
+     */
+    #[JsonProperty('custom_receipt_text')]
+    private ?string $customReceiptText;
+
+    /**
+     * The return policy that appears on receipts issued for this location.
+     * This text can also be configured in the Seller Dashboard (Receipts section).
+     *
+     * @var ?string $returnPolicy
+     */
+    #[JsonProperty('return_policy')]
+    private ?string $returnPolicy;
+
+    /**
      * @param array{
      *   id?: ?string,
      *   name?: ?string,
@@ -248,6 +266,8 @@ class Location extends JsonSerializableType
      *   mcc?: ?string,
      *   fullFormatLogoUrl?: ?string,
      *   taxIds?: ?TaxIds,
+     *   customReceiptText?: ?string,
+     *   returnPolicy?: ?string,
      * } $values
      */
     public function __construct(
@@ -280,6 +300,8 @@ class Location extends JsonSerializableType
         $this->mcc = $values['mcc'] ?? null;
         $this->fullFormatLogoUrl = $values['fullFormatLogoUrl'] ?? null;
         $this->taxIds = $values['taxIds'] ?? null;
+        $this->customReceiptText = $values['customReceiptText'] ?? null;
+        $this->returnPolicy = $values['returnPolicy'] ?? null;
     }
 
     /**
@@ -296,6 +318,7 @@ class Location extends JsonSerializableType
     public function setId(?string $value = null): self
     {
         $this->id = $value;
+        $this->_setField('id');
         return $this;
     }
 
@@ -313,6 +336,7 @@ class Location extends JsonSerializableType
     public function setName(?string $value = null): self
     {
         $this->name = $value;
+        $this->_setField('name');
         return $this;
     }
 
@@ -330,6 +354,7 @@ class Location extends JsonSerializableType
     public function setAddress(?Address $value = null): self
     {
         $this->address = $value;
+        $this->_setField('address');
         return $this;
     }
 
@@ -347,6 +372,7 @@ class Location extends JsonSerializableType
     public function setTimezone(?string $value = null): self
     {
         $this->timezone = $value;
+        $this->_setField('timezone');
         return $this;
     }
 
@@ -364,6 +390,7 @@ class Location extends JsonSerializableType
     public function setCapabilities(?array $value = null): self
     {
         $this->capabilities = $value;
+        $this->_setField('capabilities');
         return $this;
     }
 
@@ -381,6 +408,7 @@ class Location extends JsonSerializableType
     public function setStatus(?string $value = null): self
     {
         $this->status = $value;
+        $this->_setField('status');
         return $this;
     }
 
@@ -398,6 +426,7 @@ class Location extends JsonSerializableType
     public function setCreatedAt(?string $value = null): self
     {
         $this->createdAt = $value;
+        $this->_setField('createdAt');
         return $this;
     }
 
@@ -415,6 +444,7 @@ class Location extends JsonSerializableType
     public function setMerchantId(?string $value = null): self
     {
         $this->merchantId = $value;
+        $this->_setField('merchantId');
         return $this;
     }
 
@@ -432,6 +462,7 @@ class Location extends JsonSerializableType
     public function setCountry(?string $value = null): self
     {
         $this->country = $value;
+        $this->_setField('country');
         return $this;
     }
 
@@ -449,6 +480,7 @@ class Location extends JsonSerializableType
     public function setLanguageCode(?string $value = null): self
     {
         $this->languageCode = $value;
+        $this->_setField('languageCode');
         return $this;
     }
 
@@ -466,6 +498,7 @@ class Location extends JsonSerializableType
     public function setCurrency(?string $value = null): self
     {
         $this->currency = $value;
+        $this->_setField('currency');
         return $this;
     }
 
@@ -483,6 +516,7 @@ class Location extends JsonSerializableType
     public function setPhoneNumber(?string $value = null): self
     {
         $this->phoneNumber = $value;
+        $this->_setField('phoneNumber');
         return $this;
     }
 
@@ -500,6 +534,7 @@ class Location extends JsonSerializableType
     public function setBusinessName(?string $value = null): self
     {
         $this->businessName = $value;
+        $this->_setField('businessName');
         return $this;
     }
 
@@ -517,6 +552,7 @@ class Location extends JsonSerializableType
     public function setType(?string $value = null): self
     {
         $this->type = $value;
+        $this->_setField('type');
         return $this;
     }
 
@@ -534,6 +570,7 @@ class Location extends JsonSerializableType
     public function setWebsiteUrl(?string $value = null): self
     {
         $this->websiteUrl = $value;
+        $this->_setField('websiteUrl');
         return $this;
     }
 
@@ -551,6 +588,7 @@ class Location extends JsonSerializableType
     public function setBusinessHours(?BusinessHours $value = null): self
     {
         $this->businessHours = $value;
+        $this->_setField('businessHours');
         return $this;
     }
 
@@ -568,6 +606,7 @@ class Location extends JsonSerializableType
     public function setBusinessEmail(?string $value = null): self
     {
         $this->businessEmail = $value;
+        $this->_setField('businessEmail');
         return $this;
     }
 
@@ -585,6 +624,7 @@ class Location extends JsonSerializableType
     public function setDescription(?string $value = null): self
     {
         $this->description = $value;
+        $this->_setField('description');
         return $this;
     }
 
@@ -602,6 +642,7 @@ class Location extends JsonSerializableType
     public function setTwitterUsername(?string $value = null): self
     {
         $this->twitterUsername = $value;
+        $this->_setField('twitterUsername');
         return $this;
     }
 
@@ -619,6 +660,7 @@ class Location extends JsonSerializableType
     public function setInstagramUsername(?string $value = null): self
     {
         $this->instagramUsername = $value;
+        $this->_setField('instagramUsername');
         return $this;
     }
 
@@ -636,6 +678,7 @@ class Location extends JsonSerializableType
     public function setFacebookUrl(?string $value = null): self
     {
         $this->facebookUrl = $value;
+        $this->_setField('facebookUrl');
         return $this;
     }
 
@@ -653,6 +696,7 @@ class Location extends JsonSerializableType
     public function setCoordinates(?Coordinates $value = null): self
     {
         $this->coordinates = $value;
+        $this->_setField('coordinates');
         return $this;
     }
 
@@ -670,6 +714,7 @@ class Location extends JsonSerializableType
     public function setLogoUrl(?string $value = null): self
     {
         $this->logoUrl = $value;
+        $this->_setField('logoUrl');
         return $this;
     }
 
@@ -687,6 +732,7 @@ class Location extends JsonSerializableType
     public function setPosBackgroundUrl(?string $value = null): self
     {
         $this->posBackgroundUrl = $value;
+        $this->_setField('posBackgroundUrl');
         return $this;
     }
 
@@ -704,6 +750,7 @@ class Location extends JsonSerializableType
     public function setMcc(?string $value = null): self
     {
         $this->mcc = $value;
+        $this->_setField('mcc');
         return $this;
     }
 
@@ -721,6 +768,7 @@ class Location extends JsonSerializableType
     public function setFullFormatLogoUrl(?string $value = null): self
     {
         $this->fullFormatLogoUrl = $value;
+        $this->_setField('fullFormatLogoUrl');
         return $this;
     }
 
@@ -738,6 +786,43 @@ class Location extends JsonSerializableType
     public function setTaxIds(?TaxIds $value = null): self
     {
         $this->taxIds = $value;
+        $this->_setField('taxIds');
+        return $this;
+    }
+
+    /**
+     * @return ?string
+     */
+    public function getCustomReceiptText(): ?string
+    {
+        return $this->customReceiptText;
+    }
+
+    /**
+     * @param ?string $value
+     */
+    public function setCustomReceiptText(?string $value = null): self
+    {
+        $this->customReceiptText = $value;
+        $this->_setField('customReceiptText');
+        return $this;
+    }
+
+    /**
+     * @return ?string
+     */
+    public function getReturnPolicy(): ?string
+    {
+        return $this->returnPolicy;
+    }
+
+    /**
+     * @param ?string $value
+     */
+    public function setReturnPolicy(?string $value = null): self
+    {
+        $this->returnPolicy = $value;
+        $this->_setField('returnPolicy');
         return $this;
     }
 

@@ -45,12 +45,24 @@ class DeviceCheckoutOptions extends JsonSerializableType
     private ?bool $showItemizedCart;
 
     /**
+     * Controls whether the mobile client applies Auto Card Surcharge (ACS) during checkout.
+     * If true, ACS is applied based on Dashboard configuration.
+     * If false, ACS is not applied regardless of that configuration.
+     * For more information, see [Add a Card Surcharge](https://developer.squareup.com/docs/terminal-api/additional-payment-checkout-features#add-a-card-surcharge).
+     *
+     * @var ?bool $allowAutoCardSurcharge
+     */
+    #[JsonProperty('allow_auto_card_surcharge')]
+    private ?bool $allowAutoCardSurcharge;
+
+    /**
      * @param array{
      *   deviceId: string,
      *   skipReceiptScreen?: ?bool,
      *   collectSignature?: ?bool,
      *   tipSettings?: ?TipSettings,
      *   showItemizedCart?: ?bool,
+     *   allowAutoCardSurcharge?: ?bool,
      * } $values
      */
     public function __construct(
@@ -61,6 +73,7 @@ class DeviceCheckoutOptions extends JsonSerializableType
         $this->collectSignature = $values['collectSignature'] ?? null;
         $this->tipSettings = $values['tipSettings'] ?? null;
         $this->showItemizedCart = $values['showItemizedCart'] ?? null;
+        $this->allowAutoCardSurcharge = $values['allowAutoCardSurcharge'] ?? null;
     }
 
     /**
@@ -77,6 +90,7 @@ class DeviceCheckoutOptions extends JsonSerializableType
     public function setDeviceId(string $value): self
     {
         $this->deviceId = $value;
+        $this->_setField('deviceId');
         return $this;
     }
 
@@ -94,6 +108,7 @@ class DeviceCheckoutOptions extends JsonSerializableType
     public function setSkipReceiptScreen(?bool $value = null): self
     {
         $this->skipReceiptScreen = $value;
+        $this->_setField('skipReceiptScreen');
         return $this;
     }
 
@@ -111,6 +126,7 @@ class DeviceCheckoutOptions extends JsonSerializableType
     public function setCollectSignature(?bool $value = null): self
     {
         $this->collectSignature = $value;
+        $this->_setField('collectSignature');
         return $this;
     }
 
@@ -128,6 +144,7 @@ class DeviceCheckoutOptions extends JsonSerializableType
     public function setTipSettings(?TipSettings $value = null): self
     {
         $this->tipSettings = $value;
+        $this->_setField('tipSettings');
         return $this;
     }
 
@@ -145,6 +162,25 @@ class DeviceCheckoutOptions extends JsonSerializableType
     public function setShowItemizedCart(?bool $value = null): self
     {
         $this->showItemizedCart = $value;
+        $this->_setField('showItemizedCart');
+        return $this;
+    }
+
+    /**
+     * @return ?bool
+     */
+    public function getAllowAutoCardSurcharge(): ?bool
+    {
+        return $this->allowAutoCardSurcharge;
+    }
+
+    /**
+     * @param ?bool $value
+     */
+    public function setAllowAutoCardSurcharge(?bool $value = null): self
+    {
+        $this->allowAutoCardSurcharge = $value;
+        $this->_setField('allowAutoCardSurcharge');
         return $this;
     }
 

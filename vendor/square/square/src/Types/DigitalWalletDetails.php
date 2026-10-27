@@ -4,6 +4,7 @@ namespace Square\Types;
 
 use Square\Core\Json\JsonSerializableType;
 use Square\Core\Json\JsonProperty;
+use Square\Core\Types\ArrayType;
 
 /**
  * Additional details about `WALLET` type payments. Contains only non-confidential information.
@@ -21,7 +22,7 @@ class DigitalWalletDetails extends JsonSerializableType
 
     /**
      * The brand used for the `WALLET` payment. The brand can be `CASH_APP`, `PAYPAY`, `ALIPAY`,
-     * `RAKUTEN_PAY`, `AU_PAY`, `D_BARAI`, `MERPAY`, `WECHAT_PAY` or `UNKNOWN`.
+     * `RAKUTEN_PAY`, `AU_PAY`, `D_BARAI`, `MERPAY`, `WECHAT_PAY`, `LIGHTNING` or `UNKNOWN`.
      *
      * @var ?string $brand
      */
@@ -35,10 +36,24 @@ class DigitalWalletDetails extends JsonSerializableType
     private ?CashAppDetails $cashAppDetails;
 
     /**
+     * @var ?LightningDetails $lightningDetails Brand-specific details for payments with the `brand` of `LIGHTNING`.
+     */
+    #[JsonProperty('lightning_details')]
+    private ?LightningDetails $lightningDetails;
+
+    /**
+     * @var ?array<Error> $errors Information about errors encountered during the payment.
+     */
+    #[JsonProperty('errors'), ArrayType([Error::class])]
+    private ?array $errors;
+
+    /**
      * @param array{
      *   status?: ?string,
      *   brand?: ?string,
      *   cashAppDetails?: ?CashAppDetails,
+     *   lightningDetails?: ?LightningDetails,
+     *   errors?: ?array<Error>,
      * } $values
      */
     public function __construct(
@@ -47,6 +62,8 @@ class DigitalWalletDetails extends JsonSerializableType
         $this->status = $values['status'] ?? null;
         $this->brand = $values['brand'] ?? null;
         $this->cashAppDetails = $values['cashAppDetails'] ?? null;
+        $this->lightningDetails = $values['lightningDetails'] ?? null;
+        $this->errors = $values['errors'] ?? null;
     }
 
     /**
@@ -63,6 +80,7 @@ class DigitalWalletDetails extends JsonSerializableType
     public function setStatus(?string $value = null): self
     {
         $this->status = $value;
+        $this->_setField('status');
         return $this;
     }
 
@@ -80,6 +98,7 @@ class DigitalWalletDetails extends JsonSerializableType
     public function setBrand(?string $value = null): self
     {
         $this->brand = $value;
+        $this->_setField('brand');
         return $this;
     }
 
@@ -97,6 +116,43 @@ class DigitalWalletDetails extends JsonSerializableType
     public function setCashAppDetails(?CashAppDetails $value = null): self
     {
         $this->cashAppDetails = $value;
+        $this->_setField('cashAppDetails');
+        return $this;
+    }
+
+    /**
+     * @return ?LightningDetails
+     */
+    public function getLightningDetails(): ?LightningDetails
+    {
+        return $this->lightningDetails;
+    }
+
+    /**
+     * @param ?LightningDetails $value
+     */
+    public function setLightningDetails(?LightningDetails $value = null): self
+    {
+        $this->lightningDetails = $value;
+        $this->_setField('lightningDetails');
+        return $this;
+    }
+
+    /**
+     * @return ?array<Error>
+     */
+    public function getErrors(): ?array
+    {
+        return $this->errors;
+    }
+
+    /**
+     * @param ?array<Error> $value
+     */
+    public function setErrors(?array $value = null): self
+    {
+        $this->errors = $value;
+        $this->_setField('errors');
         return $this;
     }
 

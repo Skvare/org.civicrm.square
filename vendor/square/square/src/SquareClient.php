@@ -2,7 +2,6 @@
 
 namespace Square;
 
-use Square\Mobile\MobileClient;
 use Square\OAuth\OAuthClient;
 use Square\V1Transactions\V1TransactionsClient;
 use Square\ApplePay\ApplePayClient;
@@ -36,19 +35,15 @@ use Square\Team\TeamClient;
 use Square\Terminal\TerminalClient;
 use Square\TransferOrders\TransferOrdersClient;
 use Square\Vendors\VendorsClient;
+use Square\Reporting\ReportingClient;
 use Square\CashDrawers\CashDrawersClient;
 use Square\Webhooks\WebhooksClient;
-use GuzzleHttp\ClientInterface;
+use Psr\Http\Client\ClientInterface;
 use Square\Core\Client\RawClient;
 use Exception;
 
 class SquareClient
 {
-    /**
-     * @var MobileClient $mobile
-     */
-    public MobileClient $mobile;
-
     /**
      * @var OAuthClient $oAuth
      */
@@ -215,6 +210,11 @@ class SquareClient
     public VendorsClient $vendors;
 
     /**
+     * @var ReportingClient $reporting
+     */
+    public ReportingClient $reporting;
+
+    /**
      * @var CashDrawersClient $cashDrawers
      */
     public CashDrawersClient $cashDrawers;
@@ -231,7 +231,7 @@ class SquareClient
      *   maxRetries?: int,
      *   timeout?: float,
      *   headers?: array<string, string>,
-     * } $options
+     * } $options @phpstan-ignore-next-line Property is used in endpoint methods via HttpEndpointGenerator
      */
     private array $options;
 
@@ -259,17 +259,18 @@ class SquareClient
         $token ??= $this->getFromEnvOrThrow('SQUARE_TOKEN', 'Please pass in token or set the environment variable SQUARE_TOKEN.');
         $defaultHeaders = [
             'Authorization' => "Bearer $token",
-            'Square-Version' => '2025-10-16',
+            'Square-Version' => '2026-09-16',
             'X-Fern-Language' => 'PHP',
             'X-Fern-SDK-Name' => 'Square',
-            'X-Fern-SDK-Version' => '43.2.0.20251016',
-            'User-Agent' => 'square/square/43.2.0.20251016',
+            'X-Fern-SDK-Version' => '47.0.0.20260916',
+            'User-Agent' => 'square/square/47.0.0.20260916',
         ];
         if ($version != null) {
             $defaultHeaders['Square-Version'] = $version;
         }
 
         $this->options = $options ?? [];
+
         $this->options['headers'] = array_merge(
             $defaultHeaders,
             $this->options['headers'] ?? [],
@@ -279,7 +280,6 @@ class SquareClient
             options: $this->options,
         );
 
-        $this->mobile = new MobileClient($this->client, $this->options);
         $this->oAuth = new OAuthClient($this->client, $this->options);
         $this->v1Transactions = new V1TransactionsClient($this->client, $this->options);
         $this->applePay = new ApplePayClient($this->client, $this->options);
@@ -313,6 +313,7 @@ class SquareClient
         $this->terminal = new TerminalClient($this->client, $this->options);
         $this->transferOrders = new TransferOrdersClient($this->client, $this->options);
         $this->vendors = new VendorsClient($this->client, $this->options);
+        $this->reporting = new ReportingClient($this->client, $this->options);
         $this->cashDrawers = new CashDrawersClient($this->client, $this->options);
         $this->webhooks = new WebhooksClient($this->client, $this->options);
     }

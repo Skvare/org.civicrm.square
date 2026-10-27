@@ -4,6 +4,7 @@ namespace Square\Tests\Core\Json;
 
 use DateTime;
 use PHPUnit\Framework\TestCase;
+use Square\Core\Json\JsonEncoder;
 use Square\Core\Json\JsonProperty;
 use Square\Core\Json\JsonSerializableType;
 use Square\Core\Types\ArrayType;
@@ -136,13 +137,13 @@ class ExhaustiveTest extends TestCase
      */
     public function testExhaustive(): void
     {
-        $expectedJson = json_encode(
+        $expectedJson = JsonEncoder::encode(
             [
                 'nested_type' => ['nested_property' => '1995-07-20'],
                 'simple_property' => 'Test String',
                 // Omit 'nullable_property' to test null serialization
                 'date_property' => '2023-01-01',
-                'datetime_property' => '2023-01-01T12:34:56+00:00',
+                'datetime_property' => '2023-01-01T12:34:56Z',
                 'string_array' => ['one', 'two', 'three'],
                 'map_property' => ['key1' => 1, 'key2' => 2],
                 'object_array' => [
@@ -155,7 +156,6 @@ class ExhaustiveTest extends TestCase
                 ],
                 'dates_array' => ['2023-01-01', null, '2023-03-01'] // Testing nullable dates in array>
             ],
-            JSON_THROW_ON_ERROR
         );
 
         $object = Type::fromJson($expectedJson);

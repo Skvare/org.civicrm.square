@@ -7,11 +7,7 @@ use Square\Core\Json\JsonProperty;
 use Square\Core\Types\ArrayType;
 
 /**
- * Defines the fields that are included in the response body of
- * a request to the [TestWebhookSubscription](api-endpoint:WebhookSubscriptions-TestWebhookSubscription) endpoint.
- *
- * Note: If there are errors processing the request, the [SubscriptionTestResult](entity:SubscriptionTestResult) field is not
- * present.
+ * Defines the fields that are included in the response body of a request to the TestWebhookSubscription endpoint.
  */
 class TestWebhookSubscriptionResponse extends JsonSerializableType
 {
@@ -28,9 +24,37 @@ class TestWebhookSubscriptionResponse extends JsonSerializableType
     private ?SubscriptionTestResult $subscriptionTestResult;
 
     /**
+     * @var ?string $notificationUrl The URL that was used for the webhook notification test.
+     */
+    #[JsonProperty('notification_url')]
+    private ?string $notificationUrl;
+
+    /**
+     * @var ?int $statusCode The HTTP status code returned by the notification URL.
+     */
+    #[JsonProperty('status_code')]
+    private ?int $statusCode;
+
+    /**
+     * @var ?bool $passesFilter Whether the notification passed any configured filters.
+     */
+    #[JsonProperty('passes_filter')]
+    private ?bool $passesFilter;
+
+    /**
+     * @var ?array<string, mixed> $payload The payload that was sent in the test notification.
+     */
+    #[JsonProperty('payload'), ArrayType(['string' => 'mixed'])]
+    private ?array $payload;
+
+    /**
      * @param array{
      *   errors?: ?array<Error>,
      *   subscriptionTestResult?: ?SubscriptionTestResult,
+     *   notificationUrl?: ?string,
+     *   statusCode?: ?int,
+     *   passesFilter?: ?bool,
+     *   payload?: ?array<string, mixed>,
      * } $values
      */
     public function __construct(
@@ -38,6 +62,10 @@ class TestWebhookSubscriptionResponse extends JsonSerializableType
     ) {
         $this->errors = $values['errors'] ?? null;
         $this->subscriptionTestResult = $values['subscriptionTestResult'] ?? null;
+        $this->notificationUrl = $values['notificationUrl'] ?? null;
+        $this->statusCode = $values['statusCode'] ?? null;
+        $this->passesFilter = $values['passesFilter'] ?? null;
+        $this->payload = $values['payload'] ?? null;
     }
 
     /**
@@ -54,6 +82,7 @@ class TestWebhookSubscriptionResponse extends JsonSerializableType
     public function setErrors(?array $value = null): self
     {
         $this->errors = $value;
+        $this->_setField('errors');
         return $this;
     }
 
@@ -71,6 +100,79 @@ class TestWebhookSubscriptionResponse extends JsonSerializableType
     public function setSubscriptionTestResult(?SubscriptionTestResult $value = null): self
     {
         $this->subscriptionTestResult = $value;
+        $this->_setField('subscriptionTestResult');
+        return $this;
+    }
+
+    /**
+     * @return ?string
+     */
+    public function getNotificationUrl(): ?string
+    {
+        return $this->notificationUrl;
+    }
+
+    /**
+     * @param ?string $value
+     */
+    public function setNotificationUrl(?string $value = null): self
+    {
+        $this->notificationUrl = $value;
+        $this->_setField('notificationUrl');
+        return $this;
+    }
+
+    /**
+     * @return ?int
+     */
+    public function getStatusCode(): ?int
+    {
+        return $this->statusCode;
+    }
+
+    /**
+     * @param ?int $value
+     */
+    public function setStatusCode(?int $value = null): self
+    {
+        $this->statusCode = $value;
+        $this->_setField('statusCode');
+        return $this;
+    }
+
+    /**
+     * @return ?bool
+     */
+    public function getPassesFilter(): ?bool
+    {
+        return $this->passesFilter;
+    }
+
+    /**
+     * @param ?bool $value
+     */
+    public function setPassesFilter(?bool $value = null): self
+    {
+        $this->passesFilter = $value;
+        $this->_setField('passesFilter');
+        return $this;
+    }
+
+    /**
+     * @return ?array<string, mixed>
+     */
+    public function getPayload(): ?array
+    {
+        return $this->payload;
+    }
+
+    /**
+     * @param ?array<string, mixed> $value
+     */
+    public function setPayload(?array $value = null): self
+    {
+        $this->payload = $value;
+        $this->_setField('payload');
         return $this;
     }
 

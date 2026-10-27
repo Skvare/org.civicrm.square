@@ -20,10 +20,20 @@ class CatalogObjectCategory extends JsonSerializableType
     private ?string $id;
 
     /**
-     * @var ?int $ordinal The order of the object within the context of the category.
+     * The position of this object within the specified category. When an item is assigned to a category,
+     * the ordinal determines the item's position relative to other items in the same category. When used for a
+     * parent category reference, the ordinal determines the category's position among its sibling categories.
+     *
+     * @var ?int $ordinal
      */
     #[JsonProperty('ordinal')]
     private ?int $ordinal;
+
+    /**
+     * @var ?'CATEGORY' $type
+     */
+    #[JsonProperty('type')]
+    private ?string $type;
 
     /**
      * @var ?CatalogCategory $categoryData Structured data for a `CatalogCategory`, set for CatalogObjects of type `CATEGORY`.
@@ -129,6 +139,7 @@ class CatalogObjectCategory extends JsonSerializableType
      * @param array{
      *   id?: ?string,
      *   ordinal?: ?int,
+     *   type?: ?'CATEGORY',
      *   categoryData?: ?CatalogCategory,
      *   updatedAt?: ?string,
      *   version?: ?int,
@@ -146,6 +157,7 @@ class CatalogObjectCategory extends JsonSerializableType
     ) {
         $this->id = $values['id'] ?? null;
         $this->ordinal = $values['ordinal'] ?? null;
+        $this->type = $values['type'] ?? null;
         $this->categoryData = $values['categoryData'] ?? null;
         $this->updatedAt = $values['updatedAt'] ?? null;
         $this->version = $values['version'] ?? null;
@@ -172,6 +184,7 @@ class CatalogObjectCategory extends JsonSerializableType
     public function setId(?string $value = null): self
     {
         $this->id = $value;
+        $this->_setField('id');
         return $this;
     }
 
@@ -189,6 +202,25 @@ class CatalogObjectCategory extends JsonSerializableType
     public function setOrdinal(?int $value = null): self
     {
         $this->ordinal = $value;
+        $this->_setField('ordinal');
+        return $this;
+    }
+
+    /**
+     * @return ?'CATEGORY'
+     */
+    public function getType(): ?string
+    {
+        return $this->type;
+    }
+
+    /**
+     * @param ?'CATEGORY' $value
+     */
+    public function setType(?string $value = null): self
+    {
+        $this->type = $value;
+        $this->_setField('type');
         return $this;
     }
 
@@ -206,6 +238,7 @@ class CatalogObjectCategory extends JsonSerializableType
     public function setCategoryData(?CatalogCategory $value = null): self
     {
         $this->categoryData = $value;
+        $this->_setField('categoryData');
         return $this;
     }
 
@@ -223,6 +256,7 @@ class CatalogObjectCategory extends JsonSerializableType
     public function setUpdatedAt(?string $value = null): self
     {
         $this->updatedAt = $value;
+        $this->_setField('updatedAt');
         return $this;
     }
 
@@ -240,6 +274,7 @@ class CatalogObjectCategory extends JsonSerializableType
     public function setVersion(?int $value = null): self
     {
         $this->version = $value;
+        $this->_setField('version');
         return $this;
     }
 
@@ -257,6 +292,7 @@ class CatalogObjectCategory extends JsonSerializableType
     public function setIsDeleted(?bool $value = null): self
     {
         $this->isDeleted = $value;
+        $this->_setField('isDeleted');
         return $this;
     }
 
@@ -274,6 +310,7 @@ class CatalogObjectCategory extends JsonSerializableType
     public function setCustomAttributeValues(?array $value = null): self
     {
         $this->customAttributeValues = $value;
+        $this->_setField('customAttributeValues');
         return $this;
     }
 
@@ -291,6 +328,7 @@ class CatalogObjectCategory extends JsonSerializableType
     public function setCatalogV1Ids(?array $value = null): self
     {
         $this->catalogV1Ids = $value;
+        $this->_setField('catalogV1Ids');
         return $this;
     }
 
@@ -308,6 +346,7 @@ class CatalogObjectCategory extends JsonSerializableType
     public function setPresentAtAllLocations(?bool $value = null): self
     {
         $this->presentAtAllLocations = $value;
+        $this->_setField('presentAtAllLocations');
         return $this;
     }
 
@@ -325,6 +364,7 @@ class CatalogObjectCategory extends JsonSerializableType
     public function setPresentAtLocationIds(?array $value = null): self
     {
         $this->presentAtLocationIds = $value;
+        $this->_setField('presentAtLocationIds');
         return $this;
     }
 
@@ -342,6 +382,7 @@ class CatalogObjectCategory extends JsonSerializableType
     public function setAbsentAtLocationIds(?array $value = null): self
     {
         $this->absentAtLocationIds = $value;
+        $this->_setField('absentAtLocationIds');
         return $this;
     }
 
@@ -359,6 +400,7 @@ class CatalogObjectCategory extends JsonSerializableType
     public function setImageId(?string $value = null): self
     {
         $this->imageId = $value;
+        $this->_setField('imageId');
         return $this;
     }
 

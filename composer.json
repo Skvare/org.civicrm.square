@@ -15,7 +15,10 @@
     },
     "sort-packages": true,
     "prepend-autoloader": false,
-    "optimize-autoloader": true
+    "optimize-autoloader": true,
+    "allow-plugins": {
+      "php-http/discovery": true
+    }
   },
   "authors": [
     {
@@ -29,6 +32,8 @@
   },
   "require": {
     "php": ">=8.2",
-    "square/square": "^43.2"
+    "nyholm/psr7": "^1.8",
+    "square/square": "^47.0",
+    "symfony/http-client": "^7.4"
   }
 }

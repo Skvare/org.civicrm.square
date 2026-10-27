@@ -4,6 +4,7 @@ namespace Square\Tests\Core\Json;
 
 use DateTime;
 use PHPUnit\Framework\TestCase;
+use Square\Core\Json\JsonEncoder;
 use Square\Core\Json\JsonProperty;
 use Square\Core\Json\JsonSerializableType;
 use Square\Core\Types\ArrayType;
@@ -34,15 +35,14 @@ class UnionArrayTest extends TestCase
 {
     public function testUnionArray(): void
     {
-        $expectedJson = json_encode(
+        $expectedJson = JsonEncoder::encode(
             [
                 'mixed_dates' => [
-                    1 => '2023-01-01T12:00:00+00:00',
+                    1 => '2023-01-01T12:00:00Z',
                     2 => null,
                     3 => 'Some String'
                 ]
             ],
-            JSON_THROW_ON_ERROR
         );
 
         $object = UnionArray::fromJson($expectedJson);

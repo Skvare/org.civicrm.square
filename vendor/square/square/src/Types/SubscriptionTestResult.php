@@ -4,10 +4,10 @@ namespace Square\Types;
 
 use Square\Core\Json\JsonSerializableType;
 use Square\Core\Json\JsonProperty;
+use Square\Core\Types\ArrayType;
 
 /**
- * Represents the details of a webhook subscription, including notification URL,
- * event types, and signature key.
+ * Represents the result of testing a webhook subscription. Note: The actual API returns these fields at the root level of TestWebhookSubscriptionResponse, not nested under this object.
  */
 class SubscriptionTestResult extends JsonSerializableType
 {
@@ -18,16 +18,16 @@ class SubscriptionTestResult extends JsonSerializableType
     private ?string $id;
 
     /**
-     * @var ?int $statusCode The status code returned by the subscription notification URL.
+     * @var ?int $statusCode The HTTP status code returned by the notification URL.
      */
     #[JsonProperty('status_code')]
     private ?int $statusCode;
 
     /**
-     * @var ?string $payload An object containing the payload of the test event. For example, a `payment.created` event.
+     * @var ?array<string, mixed> $payload The payload that was sent in the test notification.
      */
-    #[JsonProperty('payload')]
-    private ?string $payload;
+    #[JsonProperty('payload'), ArrayType(['string' => 'mixed'])]
+    private ?array $payload;
 
     /**
      * The timestamp of when the subscription was created, in RFC 3339 format.
@@ -48,12 +48,26 @@ class SubscriptionTestResult extends JsonSerializableType
     private ?string $updatedAt;
 
     /**
+     * @var ?string $notificationUrl The URL that was used for the webhook notification test.
+     */
+    #[JsonProperty('notification_url')]
+    private ?string $notificationUrl;
+
+    /**
+     * @var ?bool $passesFilter Whether the notification passed any configured filters.
+     */
+    #[JsonProperty('passes_filter')]
+    private ?bool $passesFilter;
+
+    /**
      * @param array{
      *   id?: ?string,
      *   statusCode?: ?int,
-     *   payload?: ?string,
+     *   payload?: ?array<string, mixed>,
      *   createdAt?: ?string,
      *   updatedAt?: ?string,
+     *   notificationUrl?: ?string,
+     *   passesFilter?: ?bool,
      * } $values
      */
     public function __construct(
@@ -64,6 +78,8 @@ class SubscriptionTestResult extends JsonSerializableType
         $this->payload = $values['payload'] ?? null;
         $this->createdAt = $values['createdAt'] ?? null;
         $this->updatedAt = $values['updatedAt'] ?? null;
+        $this->notificationUrl = $values['notificationUrl'] ?? null;
+        $this->passesFilter = $values['passesFilter'] ?? null;
     }
 
     /**
@@ -80,6 +96,7 @@ class SubscriptionTestResult extends JsonSerializableType
     public function setId(?string $value = null): self
     {
         $this->id = $value;
+        $this->_setField('id');
         return $this;
     }
 
@@ -97,23 +114,25 @@ class SubscriptionTestResult extends JsonSerializableType
     public function setStatusCode(?int $value = null): self
     {
         $this->statusCode = $value;
+        $this->_setField('statusCode');
         return $this;
     }
 
     /**
-     * @return ?string
+     * @return ?array<string, mixed>
      */
-    public function getPayload(): ?string
+    public function getPayload(): ?array
     {
         return $this->payload;
     }
 
     /**
-     * @param ?string $value
+     * @param ?array<string, mixed> $value
      */
-    public function setPayload(?string $value = null): self
+    public function setPayload(?array $value = null): self
     {
         $this->payload = $value;
+        $this->_setField('payload');
         return $this;
     }
 
@@ -131,6 +150,7 @@ class SubscriptionTestResult extends JsonSerializableType
     public function setCreatedAt(?string $value = null): self
     {
         $this->createdAt = $value;
+        $this->_setField('createdAt');
         return $this;
     }
 
@@ -148,6 +168,43 @@ class SubscriptionTestResult extends JsonSerializableType
     public function setUpdatedAt(?string $value = null): self
     {
         $this->updatedAt = $value;
+        $this->_setField('updatedAt');
+        return $this;
+    }
+
+    /**
+     * @return ?string
+     */
+    public function getNotificationUrl(): ?string
+    {
+        return $this->notificationUrl;
+    }
+
+    /**
+     * @param ?string $value
+     */
+    public function setNotificationUrl(?string $value = null): self
+    {
+        $this->notificationUrl = $value;
+        $this->_setField('notificationUrl');
+        return $this;
+    }
+
+    /**
+     * @return ?bool
+     */
+    public function getPassesFilter(): ?bool
+    {
+        return $this->passesFilter;
+    }
+
+    /**
+     * @param ?bool $value
+     */
+    public function setPassesFilter(?bool $value = null): self
+    {
+        $this->passesFilter = $value;
+        $this->_setField('passesFilter');
         return $this;
     }
 

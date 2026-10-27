@@ -12,45 +12,28 @@ use Square\Core\Types\ArrayType;
 class GetBankAccountResponse extends JsonSerializableType
 {
     /**
-     * @var ?array<Error> $errors Information on errors encountered during the request.
-     */
-    #[JsonProperty('errors'), ArrayType([Error::class])]
-    private ?array $errors;
-
-    /**
      * @var ?BankAccount $bankAccount The requested `BankAccount` object.
      */
     #[JsonProperty('bank_account')]
     private ?BankAccount $bankAccount;
 
     /**
+     * @var ?array<Error> $errors Information on errors encountered during the request.
+     */
+    #[JsonProperty('errors'), ArrayType([Error::class])]
+    private ?array $errors;
+
+    /**
      * @param array{
-     *   errors?: ?array<Error>,
      *   bankAccount?: ?BankAccount,
+     *   errors?: ?array<Error>,
      * } $values
      */
     public function __construct(
         array $values = [],
     ) {
-        $this->errors = $values['errors'] ?? null;
         $this->bankAccount = $values['bankAccount'] ?? null;
-    }
-
-    /**
-     * @return ?array<Error>
-     */
-    public function getErrors(): ?array
-    {
-        return $this->errors;
-    }
-
-    /**
-     * @param ?array<Error> $value
-     */
-    public function setErrors(?array $value = null): self
-    {
-        $this->errors = $value;
-        return $this;
+        $this->errors = $values['errors'] ?? null;
     }
 
     /**
@@ -67,6 +50,25 @@ class GetBankAccountResponse extends JsonSerializableType
     public function setBankAccount(?BankAccount $value = null): self
     {
         $this->bankAccount = $value;
+        $this->_setField('bankAccount');
+        return $this;
+    }
+
+    /**
+     * @return ?array<Error>
+     */
+    public function getErrors(): ?array
+    {
+        return $this->errors;
+    }
+
+    /**
+     * @param ?array<Error> $value
+     */
+    public function setErrors(?array $value = null): self
+    {
+        $this->errors = $value;
+        $this->_setField('errors');
         return $this;
     }
 

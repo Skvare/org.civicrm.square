@@ -127,6 +127,18 @@ class Card extends JsonSerializableType
     private ?string $bin;
 
     /**
+     * @var ?string $createdAt Timestamp for when the card object was created on Square’s servers. In RFC 3339 format, e.g., "2016-09-04T23:59:33.123Z".
+     */
+    #[JsonProperty('created_at')]
+    private ?string $createdAt;
+
+    /**
+     * @var ?string $disabledAt Timestamp for when the card object was disabled on Square’s servers. In RFC 3339 format, e.g., "2016-09-04T23:59:33.123Z".
+     */
+    #[JsonProperty('disabled_at')]
+    private ?string $disabledAt;
+
+    /**
      * Current version number of the card. Increments with each card update. Requests to update an
      * existing Card object will be rejected unless the version in the request matches the current
      * version for the Card.
@@ -196,6 +208,8 @@ class Card extends JsonSerializableType
      *   cardType?: ?value-of<CardType>,
      *   prepaidType?: ?value-of<CardPrepaidType>,
      *   bin?: ?string,
+     *   createdAt?: ?string,
+     *   disabledAt?: ?string,
      *   version?: ?int,
      *   cardCoBrand?: ?value-of<CardCoBrand>,
      *   issuerAlert?: ?'ISSUER_ALERT_CARD_CLOSED',
@@ -221,6 +235,8 @@ class Card extends JsonSerializableType
         $this->cardType = $values['cardType'] ?? null;
         $this->prepaidType = $values['prepaidType'] ?? null;
         $this->bin = $values['bin'] ?? null;
+        $this->createdAt = $values['createdAt'] ?? null;
+        $this->disabledAt = $values['disabledAt'] ?? null;
         $this->version = $values['version'] ?? null;
         $this->cardCoBrand = $values['cardCoBrand'] ?? null;
         $this->issuerAlert = $values['issuerAlert'] ?? null;
@@ -242,6 +258,7 @@ class Card extends JsonSerializableType
     public function setId(?string $value = null): self
     {
         $this->id = $value;
+        $this->_setField('id');
         return $this;
     }
 
@@ -259,6 +276,7 @@ class Card extends JsonSerializableType
     public function setCardBrand(?string $value = null): self
     {
         $this->cardBrand = $value;
+        $this->_setField('cardBrand');
         return $this;
     }
 
@@ -276,6 +294,7 @@ class Card extends JsonSerializableType
     public function setLast4(?string $value = null): self
     {
         $this->last4 = $value;
+        $this->_setField('last4');
         return $this;
     }
 
@@ -293,6 +312,7 @@ class Card extends JsonSerializableType
     public function setExpMonth(?int $value = null): self
     {
         $this->expMonth = $value;
+        $this->_setField('expMonth');
         return $this;
     }
 
@@ -310,6 +330,7 @@ class Card extends JsonSerializableType
     public function setExpYear(?int $value = null): self
     {
         $this->expYear = $value;
+        $this->_setField('expYear');
         return $this;
     }
 
@@ -327,6 +348,7 @@ class Card extends JsonSerializableType
     public function setCardholderName(?string $value = null): self
     {
         $this->cardholderName = $value;
+        $this->_setField('cardholderName');
         return $this;
     }
 
@@ -344,6 +366,7 @@ class Card extends JsonSerializableType
     public function setBillingAddress(?Address $value = null): self
     {
         $this->billingAddress = $value;
+        $this->_setField('billingAddress');
         return $this;
     }
 
@@ -361,6 +384,7 @@ class Card extends JsonSerializableType
     public function setFingerprint(?string $value = null): self
     {
         $this->fingerprint = $value;
+        $this->_setField('fingerprint');
         return $this;
     }
 
@@ -378,6 +402,7 @@ class Card extends JsonSerializableType
     public function setCustomerId(?string $value = null): self
     {
         $this->customerId = $value;
+        $this->_setField('customerId');
         return $this;
     }
 
@@ -395,6 +420,7 @@ class Card extends JsonSerializableType
     public function setMerchantId(?string $value = null): self
     {
         $this->merchantId = $value;
+        $this->_setField('merchantId');
         return $this;
     }
 
@@ -412,6 +438,7 @@ class Card extends JsonSerializableType
     public function setReferenceId(?string $value = null): self
     {
         $this->referenceId = $value;
+        $this->_setField('referenceId');
         return $this;
     }
 
@@ -429,6 +456,7 @@ class Card extends JsonSerializableType
     public function setEnabled(?bool $value = null): self
     {
         $this->enabled = $value;
+        $this->_setField('enabled');
         return $this;
     }
 
@@ -446,6 +474,7 @@ class Card extends JsonSerializableType
     public function setCardType(?string $value = null): self
     {
         $this->cardType = $value;
+        $this->_setField('cardType');
         return $this;
     }
 
@@ -463,6 +492,7 @@ class Card extends JsonSerializableType
     public function setPrepaidType(?string $value = null): self
     {
         $this->prepaidType = $value;
+        $this->_setField('prepaidType');
         return $this;
     }
 
@@ -480,6 +510,43 @@ class Card extends JsonSerializableType
     public function setBin(?string $value = null): self
     {
         $this->bin = $value;
+        $this->_setField('bin');
+        return $this;
+    }
+
+    /**
+     * @return ?string
+     */
+    public function getCreatedAt(): ?string
+    {
+        return $this->createdAt;
+    }
+
+    /**
+     * @param ?string $value
+     */
+    public function setCreatedAt(?string $value = null): self
+    {
+        $this->createdAt = $value;
+        $this->_setField('createdAt');
+        return $this;
+    }
+
+    /**
+     * @return ?string
+     */
+    public function getDisabledAt(): ?string
+    {
+        return $this->disabledAt;
+    }
+
+    /**
+     * @param ?string $value
+     */
+    public function setDisabledAt(?string $value = null): self
+    {
+        $this->disabledAt = $value;
+        $this->_setField('disabledAt');
         return $this;
     }
 
@@ -497,6 +564,7 @@ class Card extends JsonSerializableType
     public function setVersion(?int $value = null): self
     {
         $this->version = $value;
+        $this->_setField('version');
         return $this;
     }
 
@@ -514,6 +582,7 @@ class Card extends JsonSerializableType
     public function setCardCoBrand(?string $value = null): self
     {
         $this->cardCoBrand = $value;
+        $this->_setField('cardCoBrand');
         return $this;
     }
 
@@ -531,6 +600,7 @@ class Card extends JsonSerializableType
     public function setIssuerAlert(?string $value = null): self
     {
         $this->issuerAlert = $value;
+        $this->_setField('issuerAlert');
         return $this;
     }
 
@@ -548,6 +618,7 @@ class Card extends JsonSerializableType
     public function setIssuerAlertAt(?string $value = null): self
     {
         $this->issuerAlertAt = $value;
+        $this->_setField('issuerAlertAt');
         return $this;
     }
 
@@ -565,6 +636,7 @@ class Card extends JsonSerializableType
     public function setHsaFsa(?bool $value = null): self
     {
         $this->hsaFsa = $value;
+        $this->_setField('hsaFsa');
         return $this;
     }
 

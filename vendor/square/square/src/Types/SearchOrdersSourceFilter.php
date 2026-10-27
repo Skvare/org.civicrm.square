@@ -47,6 +47,7 @@ class SearchOrdersSourceFilter extends JsonSerializableType
     public function setSourceNames(?array $value = null): self
     {
         $this->sourceNames = $value;
+        $this->_setField('sourceNames');
         return $this;
     }
 

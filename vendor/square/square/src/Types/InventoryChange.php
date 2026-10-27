@@ -41,18 +41,6 @@ class InventoryChange extends JsonSerializableType
     private ?InventoryAdjustment $adjustment;
 
     /**
-     * Contains details about the inventory transfer when `type` is
-     * `TRANSFER`, and is unset for all other change types.
-     *
-     * _Note:_ An [InventoryTransfer](entity:InventoryTransfer) object can only be set in the input to the
-     * [BatchChangeInventory](api-endpoint:Inventory-BatchChangeInventory) endpoint when the seller has an active Retail Plus subscription.
-     *
-     * @var ?InventoryTransfer $transfer
-     */
-    #[JsonProperty('transfer')]
-    private ?InventoryTransfer $transfer;
-
-    /**
      * @var ?CatalogMeasurementUnit $measurementUnit The [CatalogMeasurementUnit](entity:CatalogMeasurementUnit) object representing the catalog measurement unit associated with the inventory change.
      */
     #[JsonProperty('measurement_unit')]
@@ -69,7 +57,6 @@ class InventoryChange extends JsonSerializableType
      *   type?: ?value-of<InventoryChangeType>,
      *   physicalCount?: ?InventoryPhysicalCount,
      *   adjustment?: ?InventoryAdjustment,
-     *   transfer?: ?InventoryTransfer,
      *   measurementUnit?: ?CatalogMeasurementUnit,
      *   measurementUnitId?: ?string,
      * } $values
@@ -80,7 +67,6 @@ class InventoryChange extends JsonSerializableType
         $this->type = $values['type'] ?? null;
         $this->physicalCount = $values['physicalCount'] ?? null;
         $this->adjustment = $values['adjustment'] ?? null;
-        $this->transfer = $values['transfer'] ?? null;
         $this->measurementUnit = $values['measurementUnit'] ?? null;
         $this->measurementUnitId = $values['measurementUnitId'] ?? null;
     }
@@ -99,6 +85,7 @@ class InventoryChange extends JsonSerializableType
     public function setType(?string $value = null): self
     {
         $this->type = $value;
+        $this->_setField('type');
         return $this;
     }
 
@@ -116,6 +103,7 @@ class InventoryChange extends JsonSerializableType
     public function setPhysicalCount(?InventoryPhysicalCount $value = null): self
     {
         $this->physicalCount = $value;
+        $this->_setField('physicalCount');
         return $this;
     }
 
@@ -133,23 +121,7 @@ class InventoryChange extends JsonSerializableType
     public function setAdjustment(?InventoryAdjustment $value = null): self
     {
         $this->adjustment = $value;
-        return $this;
-    }
-
-    /**
-     * @return ?InventoryTransfer
-     */
-    public function getTransfer(): ?InventoryTransfer
-    {
-        return $this->transfer;
-    }
-
-    /**
-     * @param ?InventoryTransfer $value
-     */
-    public function setTransfer(?InventoryTransfer $value = null): self
-    {
-        $this->transfer = $value;
+        $this->_setField('adjustment');
         return $this;
     }
 
@@ -167,6 +139,7 @@ class InventoryChange extends JsonSerializableType
     public function setMeasurementUnit(?CatalogMeasurementUnit $value = null): self
     {
         $this->measurementUnit = $value;
+        $this->_setField('measurementUnit');
         return $this;
     }
 
@@ -184,6 +157,7 @@ class InventoryChange extends JsonSerializableType
     public function setMeasurementUnitId(?string $value = null): self
     {
         $this->measurementUnitId = $value;
+        $this->_setField('measurementUnitId');
         return $this;
     }
 

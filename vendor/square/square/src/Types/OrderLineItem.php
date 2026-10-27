@@ -163,7 +163,10 @@ class OrderLineItem extends JsonSerializableType
     private ?array $appliedServiceCharges;
 
     /**
-     * @var ?Money $basePriceMoney The base price for a single unit of the line item.
+     * The base price for a single unit of the line item. Note - If inclusive tax is set on
+     * this item it will be included in this value.
+     *
+     * @var ?Money $basePriceMoney
      */
     #[JsonProperty('base_price_money')]
     private ?Money $basePriceMoney;
@@ -171,7 +174,8 @@ class OrderLineItem extends JsonSerializableType
     /**
      * The total price of all item variations sold in this line item.
      * The price is calculated as `base_price_money` multiplied by `quantity`.
-     * It does not include modifiers.
+     * It does not include modifiers. Note - If inclusive tax is set on
+     * this item it will be included in this value.
      *
      * @var ?Money $variationTotalPriceMoney
      */
@@ -290,6 +294,7 @@ class OrderLineItem extends JsonSerializableType
     public function setUid(?string $value = null): self
     {
         $this->uid = $value;
+        $this->_setField('uid');
         return $this;
     }
 
@@ -307,6 +312,7 @@ class OrderLineItem extends JsonSerializableType
     public function setName(?string $value = null): self
     {
         $this->name = $value;
+        $this->_setField('name');
         return $this;
     }
 
@@ -324,6 +330,7 @@ class OrderLineItem extends JsonSerializableType
     public function setQuantity(string $value): self
     {
         $this->quantity = $value;
+        $this->_setField('quantity');
         return $this;
     }
 
@@ -341,6 +348,7 @@ class OrderLineItem extends JsonSerializableType
     public function setQuantityUnit(?OrderQuantityUnit $value = null): self
     {
         $this->quantityUnit = $value;
+        $this->_setField('quantityUnit');
         return $this;
     }
 
@@ -358,6 +366,7 @@ class OrderLineItem extends JsonSerializableType
     public function setNote(?string $value = null): self
     {
         $this->note = $value;
+        $this->_setField('note');
         return $this;
     }
 
@@ -375,6 +384,7 @@ class OrderLineItem extends JsonSerializableType
     public function setCatalogObjectId(?string $value = null): self
     {
         $this->catalogObjectId = $value;
+        $this->_setField('catalogObjectId');
         return $this;
     }
 
@@ -392,6 +402,7 @@ class OrderLineItem extends JsonSerializableType
     public function setCatalogVersion(?int $value = null): self
     {
         $this->catalogVersion = $value;
+        $this->_setField('catalogVersion');
         return $this;
     }
 
@@ -409,6 +420,7 @@ class OrderLineItem extends JsonSerializableType
     public function setVariationName(?string $value = null): self
     {
         $this->variationName = $value;
+        $this->_setField('variationName');
         return $this;
     }
 
@@ -426,6 +438,7 @@ class OrderLineItem extends JsonSerializableType
     public function setItemType(?string $value = null): self
     {
         $this->itemType = $value;
+        $this->_setField('itemType');
         return $this;
     }
 
@@ -443,6 +456,7 @@ class OrderLineItem extends JsonSerializableType
     public function setMetadata(?array $value = null): self
     {
         $this->metadata = $value;
+        $this->_setField('metadata');
         return $this;
     }
 
@@ -460,6 +474,7 @@ class OrderLineItem extends JsonSerializableType
     public function setModifiers(?array $value = null): self
     {
         $this->modifiers = $value;
+        $this->_setField('modifiers');
         return $this;
     }
 
@@ -477,6 +492,7 @@ class OrderLineItem extends JsonSerializableType
     public function setAppliedTaxes(?array $value = null): self
     {
         $this->appliedTaxes = $value;
+        $this->_setField('appliedTaxes');
         return $this;
     }
 
@@ -494,6 +510,7 @@ class OrderLineItem extends JsonSerializableType
     public function setAppliedDiscounts(?array $value = null): self
     {
         $this->appliedDiscounts = $value;
+        $this->_setField('appliedDiscounts');
         return $this;
     }
 
@@ -511,6 +528,7 @@ class OrderLineItem extends JsonSerializableType
     public function setAppliedServiceCharges(?array $value = null): self
     {
         $this->appliedServiceCharges = $value;
+        $this->_setField('appliedServiceCharges');
         return $this;
     }
 
@@ -528,6 +546,7 @@ class OrderLineItem extends JsonSerializableType
     public function setBasePriceMoney(?Money $value = null): self
     {
         $this->basePriceMoney = $value;
+        $this->_setField('basePriceMoney');
         return $this;
     }
 
@@ -545,6 +564,7 @@ class OrderLineItem extends JsonSerializableType
     public function setVariationTotalPriceMoney(?Money $value = null): self
     {
         $this->variationTotalPriceMoney = $value;
+        $this->_setField('variationTotalPriceMoney');
         return $this;
     }
 
@@ -562,6 +582,7 @@ class OrderLineItem extends JsonSerializableType
     public function setGrossSalesMoney(?Money $value = null): self
     {
         $this->grossSalesMoney = $value;
+        $this->_setField('grossSalesMoney');
         return $this;
     }
 
@@ -579,6 +600,7 @@ class OrderLineItem extends JsonSerializableType
     public function setTotalTaxMoney(?Money $value = null): self
     {
         $this->totalTaxMoney = $value;
+        $this->_setField('totalTaxMoney');
         return $this;
     }
 
@@ -596,6 +618,7 @@ class OrderLineItem extends JsonSerializableType
     public function setTotalDiscountMoney(?Money $value = null): self
     {
         $this->totalDiscountMoney = $value;
+        $this->_setField('totalDiscountMoney');
         return $this;
     }
 
@@ -613,6 +636,7 @@ class OrderLineItem extends JsonSerializableType
     public function setTotalMoney(?Money $value = null): self
     {
         $this->totalMoney = $value;
+        $this->_setField('totalMoney');
         return $this;
     }
 
@@ -630,6 +654,7 @@ class OrderLineItem extends JsonSerializableType
     public function setPricingBlocklists(?OrderLineItemPricingBlocklists $value = null): self
     {
         $this->pricingBlocklists = $value;
+        $this->_setField('pricingBlocklists');
         return $this;
     }
 
@@ -647,6 +672,7 @@ class OrderLineItem extends JsonSerializableType
     public function setTotalServiceChargeMoney(?Money $value = null): self
     {
         $this->totalServiceChargeMoney = $value;
+        $this->_setField('totalServiceChargeMoney');
         return $this;
     }
 

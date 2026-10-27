@@ -5,6 +5,7 @@ namespace Square\Catalog\Requests;
 use Square\Core\Json\JsonSerializableType;
 use Square\Core\Json\JsonProperty;
 use Square\Core\Types\ArrayType;
+use Square\Types\IncludeOptions;
 
 class BatchGetCatalogObjectsRequest extends JsonSerializableType
 {
@@ -64,12 +65,19 @@ class BatchGetCatalogObjectsRequest extends JsonSerializableType
     private ?bool $includeCategoryPathToRoot;
 
     /**
+     * @var ?IncludeOptions $includeOptions Options to include related resources in the response.
+     */
+    #[JsonProperty('include_options')]
+    private ?IncludeOptions $includeOptions;
+
+    /**
      * @param array{
      *   objectIds: array<string>,
      *   includeRelatedObjects?: ?bool,
      *   catalogVersion?: ?int,
      *   includeDeletedObjects?: ?bool,
      *   includeCategoryPathToRoot?: ?bool,
+     *   includeOptions?: ?IncludeOptions,
      * } $values
      */
     public function __construct(
@@ -80,6 +88,7 @@ class BatchGetCatalogObjectsRequest extends JsonSerializableType
         $this->catalogVersion = $values['catalogVersion'] ?? null;
         $this->includeDeletedObjects = $values['includeDeletedObjects'] ?? null;
         $this->includeCategoryPathToRoot = $values['includeCategoryPathToRoot'] ?? null;
+        $this->includeOptions = $values['includeOptions'] ?? null;
     }
 
     /**
@@ -96,6 +105,7 @@ class BatchGetCatalogObjectsRequest extends JsonSerializableType
     public function setObjectIds(array $value): self
     {
         $this->objectIds = $value;
+        $this->_setField('objectIds');
         return $this;
     }
 
@@ -113,6 +123,7 @@ class BatchGetCatalogObjectsRequest extends JsonSerializableType
     public function setIncludeRelatedObjects(?bool $value = null): self
     {
         $this->includeRelatedObjects = $value;
+        $this->_setField('includeRelatedObjects');
         return $this;
     }
 
@@ -130,6 +141,7 @@ class BatchGetCatalogObjectsRequest extends JsonSerializableType
     public function setCatalogVersion(?int $value = null): self
     {
         $this->catalogVersion = $value;
+        $this->_setField('catalogVersion');
         return $this;
     }
 
@@ -147,6 +159,7 @@ class BatchGetCatalogObjectsRequest extends JsonSerializableType
     public function setIncludeDeletedObjects(?bool $value = null): self
     {
         $this->includeDeletedObjects = $value;
+        $this->_setField('includeDeletedObjects');
         return $this;
     }
 
@@ -164,6 +177,25 @@ class BatchGetCatalogObjectsRequest extends JsonSerializableType
     public function setIncludeCategoryPathToRoot(?bool $value = null): self
     {
         $this->includeCategoryPathToRoot = $value;
+        $this->_setField('includeCategoryPathToRoot');
+        return $this;
+    }
+
+    /**
+     * @return ?IncludeOptions
+     */
+    public function getIncludeOptions(): ?IncludeOptions
+    {
+        return $this->includeOptions;
+    }
+
+    /**
+     * @param ?IncludeOptions $value
+     */
+    public function setIncludeOptions(?IncludeOptions $value = null): self
+    {
+        $this->includeOptions = $value;
+        $this->_setField('includeOptions');
         return $this;
     }
 }
