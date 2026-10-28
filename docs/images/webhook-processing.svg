@@ -1,0 +1,124 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="960" height="1394" viewBox="0 0 960 1394" role="img" aria-labelledby="title desc">
+<title id="title">Webhook processing</title>
+<desc id="desc">How CiviCRM checks, records, routes and retries every Square webhook.</desc>
+<defs><style>
+text { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif; fill: #1f2328; }
+.m { font-family: ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas, monospace; font-size: 0.92em; }
+.t { font-size: 22px; font-weight: 600; }
+.st { font-size: 14px; fill: #59636e; }
+.h { font-size: 14.5px; font-weight: 600; }
+.b { font-size: 13.5px; }
+.s { font-size: 12.5px; fill: #59636e; }
+.e { font-size: 13.5px; font-weight: 600; }
+.lane { font-size: 15px; font-weight: 600; fill: #ffffff; }
+.lanesub { font-size: 12.5px; fill: #ffffff; fill-opacity: .85; }
+.halo { paint-order: stroke; stroke: #ffffff; stroke-width: 5px; stroke-linejoin: round; }
+.sec { font-size: 16px; font-weight: 600; }
+.tag { font-size: 12px; font-weight: 600; fill: #59636e; }
+</style><marker id="a-arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#424a53"/></marker><marker id="a-ok" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#1a7f37"/></marker><marker id="a-bad" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#cf222e"/></marker><marker id="a-wait" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#9a6700"/></marker><marker id="a-muted" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#59636e"/></marker></defs>
+<rect x="0.5" y="0.5" width="959" height="1393" rx="12" fill="#ffffff" stroke="#d1d9e0"/>
+<text x="32.0" y="48.0" class="t" text-anchor="start">Webhook processing</text>
+<text x="32.0" y="74.0" class="st" text-anchor="start">Every Square event goes through the same checks, is saved to the webhook queue, and is processed in the same request.</text>
+<rect x="32" y="115.0" width="540" height="43.0" rx="8" fill="#1f2328" stroke="#1f2328" stroke-width="1.25"/>
+<text x="44.0" y="139.1" class="h" text-anchor="start" style="fill:#ffffff">Square posts the event to /civicrm/payment/ipn/{processor_id}</text>
+<path d="M302.0,158.0 L302.0,189.0" fill="none" stroke="#424a53" stroke-width="1.5" marker-end="url(#a-arrow)"/>
+<rect x="32" y="192.0" width="540" height="82.0" rx="8" fill="#ffffff" stroke="#424a53" stroke-width="1.5"/>
+<text x="44.0" y="216.1" class="h" text-anchor="start" style="fill:#1f2328">Is the signature valid?</text>
+<text x="44.0" y="239.8" class="s" text-anchor="start" style="fill:#59636e">HMAC-SHA256 of the notification URL and the raw body, with the processor's signature</text>
+<text x="44.0" y="255.8" class="s" text-anchor="start" style="fill:#59636e">key</text>
+<rect x="616" y="190.0" width="312" height="86.0" rx="8" fill="#ffebe9" stroke="#cf222e" stroke-width="1.25"/>
+<text x="628.0" y="214.1" class="h" text-anchor="start" style="fill:#a40e26">HTTP 401</text>
+<text x="628.0" y="239.3" class="b" text-anchor="start" style="fill:#1f2328">Square redelivers it. Check the key and the</text>
+<text x="628.0" y="257.3" class="b" text-anchor="start" style="fill:#1f2328">exact URL.</text>
+<path d="M572.0,233.0 L613.0,233.0" fill="none" stroke="#cf222e" stroke-width="1.5" marker-end="url(#a-bad)"/>
+<text x="594.0" y="226.0" class="tag halo" text-anchor="middle">no</text>
+<path d="M302.0,274.0 L302.0,305.0" fill="none" stroke="#424a53" stroke-width="1.5" marker-end="url(#a-arrow)"/>
+<text x="310.0" y="295.0" class="tag halo" text-anchor="start">yes</text>
+<rect x="32" y="308.0" width="540" height="43.0" rx="8" fill="#ffffff" stroke="#424a53" stroke-width="1.5"/>
+<text x="44.0" y="332.1" class="h" text-anchor="start" style="fill:#1f2328">Is the body valid JSON?</text>
+<rect x="616" y="308.0" width="312" height="43.0" rx="8" fill="#ffebe9" stroke="#cf222e" stroke-width="1.25"/>
+<text x="628.0" y="332.1" class="h" text-anchor="start" style="fill:#a40e26">HTTP 400</text>
+<path d="M572.0,329.5 L613.0,329.5" fill="none" stroke="#cf222e" stroke-width="1.5" marker-end="url(#a-bad)"/>
+<text x="594.0" y="322.5" class="tag halo" text-anchor="middle">no</text>
+<path d="M302.0,351.0 L302.0,382.0" fill="none" stroke="#424a53" stroke-width="1.5" marker-end="url(#a-arrow)"/>
+<text x="310.0" y="372.0" class="tag halo" text-anchor="start">yes</text>
+<rect x="32" y="385.0" width="540" height="43.0" rx="8" fill="#ffffff" stroke="#424a53" stroke-width="1.5"/>
+<text x="44.0" y="409.1" class="h" text-anchor="start" style="fill:#1f2328">Does the extension handle this event type?</text>
+<rect x="616" y="385.0" width="312" height="43.0" rx="8" fill="#f6f8fa" stroke="#d1d9e0" stroke-width="1.25"/>
+<text x="628.0" y="409.1" class="h" text-anchor="start" style="fill:#1f2328">HTTP 200, ignored</text>
+<path d="M572.0,406.5 L613.0,406.5" fill="none" stroke="#424a53" stroke-width="1.5" marker-end="url(#a-arrow)"/>
+<text x="594.0" y="399.5" class="tag halo" text-anchor="middle">no</text>
+<path d="M302.0,428.0 L302.0,459.0" fill="none" stroke="#424a53" stroke-width="1.5" marker-end="url(#a-arrow)"/>
+<text x="310.0" y="449.0" class="tag halo" text-anchor="start">yes</text>
+<rect x="32" y="462.0" width="540" height="43.0" rx="8" fill="#ffffff" stroke="#424a53" stroke-width="1.5"/>
+<text x="44.0" y="486.1" class="h" text-anchor="start" style="fill:#1f2328">Does it have an event_id?</text>
+<rect x="616" y="462.0" width="312" height="43.0" rx="8" fill="#ffebe9" stroke="#cf222e" stroke-width="1.25"/>
+<text x="628.0" y="486.1" class="h" text-anchor="start" style="fill:#a40e26">HTTP 400</text>
+<path d="M572.0,483.5 L613.0,483.5" fill="none" stroke="#cf222e" stroke-width="1.5" marker-end="url(#a-bad)"/>
+<text x="594.0" y="476.5" class="tag halo" text-anchor="middle">no</text>
+<path d="M302.0,505.0 L302.0,536.0" fill="none" stroke="#424a53" stroke-width="1.5" marker-end="url(#a-arrow)"/>
+<text x="310.0" y="526.0" class="tag halo" text-anchor="start">yes</text>
+<rect x="32" y="539.0" width="540" height="43.0" rx="8" fill="#ffffff" stroke="#424a53" stroke-width="1.5"/>
+<text x="44.0" y="563.1" class="h" text-anchor="start" style="fill:#1f2328">Is this event_id already in the queue?</text>
+<rect x="616" y="539.0" width="312" height="43.0" rx="8" fill="#f6f8fa" stroke="#d1d9e0" stroke-width="1.25"/>
+<text x="628.0" y="563.1" class="h" text-anchor="start" style="fill:#1f2328">HTTP 200, duplicate skipped</text>
+<path d="M572.0,560.5 L613.0,560.5" fill="none" stroke="#424a53" stroke-width="1.5" marker-end="url(#a-arrow)"/>
+<text x="594.0" y="553.5" class="tag halo" text-anchor="middle">yes</text>
+<path d="M302.0,582.0 L302.0,613.0" fill="none" stroke="#424a53" stroke-width="1.5" marker-end="url(#a-arrow)"/>
+<text x="310.0" y="603.0" class="tag halo" text-anchor="start">no</text>
+<rect x="32" y="616.0" width="540" height="66.0" rx="8" fill="#fbefff" stroke="#8250df" stroke-width="1.25"/>
+<text x="44.0" y="640.1" class="h" text-anchor="start" style="fill:#6639ba">Save it to the webhook queue with status <tspan class="m">new</tspan></text>
+<text x="44.0" y="663.8" class="s" text-anchor="start" style="fill:#59636e"><tspan class="m">civicrm_paymentprocessor_webhook</tspan>, from the mjwshared extension</text>
+<path d="M302.0,682.0 L302.0,713.0" fill="none" stroke="#424a53" stroke-width="1.5" marker-end="url(#a-arrow)"/>
+<rect x="32" y="716.0" width="540" height="66.0" rx="8" fill="#fbefff" stroke="#8250df" stroke-width="1.25"/>
+<text x="44.0" y="740.1" class="h" text-anchor="start" style="fill:#6639ba">Process it now, by event type</text>
+<text x="44.0" y="763.8" class="s" text-anchor="start" style="fill:#59636e">Square gets HTTP 200 once the event is saved, whatever the processing outcome.</text>
+<text x="32" y="828" class="sec">What each event does</text>
+<rect x="32" y="842" width="896" height="30" rx="0" fill="#f6f8fa"/>
+<text x="44" y="862" class="h">Event</text>
+<text x="344" y="862" class="h">What CiviCRM does</text>
+<line x1="32" y1="872" x2="928" y2="872" stroke="#d1d9e0"/>
+<text x="44.0" y="894.1" class="e" text-anchor="start"><tspan class="m">subscription.created</tspan></text>
+<text x="44.0" y="913.1" class="e" text-anchor="start"><tspan class="m">subscription.updated</tspan></text>
+<text x="344.0" y="893.3" class="b" text-anchor="start">Copy the subscription's status and amount to the recurring contribution. A canceled_date</text>
+<text x="344.0" y="911.3" class="b" text-anchor="start">marks it Cancelled.</text>
+<line x1="32" y1="926" x2="928" y2="926" stroke="#d1d9e0"/>
+<text x="44.0" y="948.1" class="e" text-anchor="start"><tspan class="m">invoice.created</tspan></text>
+<text x="344.0" y="947.3" class="b" text-anchor="start">Nothing: the invoice is still a draft.</text>
+<line x1="32" y1="961" x2="928" y2="961" stroke="#d1d9e0"/>
+<text x="44.0" y="983.1" class="e" text-anchor="start"><tspan class="m">invoice.payment_made</tspan></text>
+<text x="344.0" y="982.3" class="b" text-anchor="start">Record the paid installment.</text>
+<line x1="32" y1="996" x2="928" y2="996" stroke="#d1d9e0"/>
+<text x="44.0" y="1018.1" class="e" text-anchor="start"><tspan class="m">invoice.scheduled_charge_failed</tspan></text>
+<text x="344.0" y="1017.3" class="b" text-anchor="start">Mark a later installment Failed (the first stays Pending), unless Square now reports the</text>
+<text x="344.0" y="1035.3" class="b" text-anchor="start">invoice paid.</text>
+<line x1="32" y1="1048" x2="928" y2="1048" stroke="#d1d9e0"/>
+<text x="44.0" y="1070.1" class="e" text-anchor="start"><tspan class="m">payment.updated</tspan></text>
+<text x="344.0" y="1069.3" class="b" text-anchor="start">Complete a one-time contribution or record an installment; add the processing fee once</text>
+<text x="344.0" y="1087.3" class="b" text-anchor="start">Square reports it. Payments made outside CiviCRM are imported only if that setting is on.</text>
+<line x1="32" y1="1100" x2="928" y2="1100" stroke="#d1d9e0"/>
+<text x="44.0" y="1122.1" class="e" text-anchor="start"><tspan class="m">refund.created</tspan></text>
+<text x="44.0" y="1141.1" class="e" text-anchor="start"><tspan class="m">refund.updated</tspan></text>
+<text x="344.0" y="1121.3" class="b" text-anchor="start">Record a completed refund as a negative payment on the refunded contribution.</text>
+<line x1="32" y1="1154" x2="928" y2="1154" stroke="#d1d9e0"/>
+<rect x="32" y="842" width="896" height="312" rx="6" fill="none" stroke="#d1d9e0"/>
+<line x1="332" y1="842" x2="332" y2="1154" stroke="#d1d9e0"/>
+<text x="32" y="1198" class="sec">Outcome of processing</text>
+<rect x="32.0" y="1212.0" width="288.0" height="158.0" rx="8" fill="#dafbe1" stroke="#1a7f37" stroke-width="1.25"/>
+<text x="44.0" y="1236.1" class="e" text-anchor="start" style="fill:#116329"><tspan class="m">success</tspan></text>
+<text x="44.0" y="1261.3" class="b" text-anchor="start" style="fill:#1f2328">Processed.</text>
+<rect x="336.0" y="1212.0" width="288.0" height="158.0" rx="8" fill="#fff8c5" stroke="#9a6700" stroke-width="1.25"/>
+<text x="348.0" y="1236.1" class="e" text-anchor="start" style="fill:#7d4e00"><tspan class="m">new</tspan></text>
+<text x="348.0" y="1261.3" class="b" text-anchor="start" style="fill:#1f2328">A transient failure: Square unavailable</text>
+<text x="348.0" y="1279.3" class="b" text-anchor="start" style="fill:#1f2328">(network, HTTP 5xx or 429), or a related</text>
+<text x="348.0" y="1297.3" class="b" text-anchor="start" style="fill:#1f2328">CiviCRM record not saved yet. The</text>
+<text x="348.0" y="1315.3" class="b" text-anchor="start" style="fill:#1f2328">Process Payment Processor Webhooks</text>
+<text x="348.0" y="1333.3" class="b" text-anchor="start" style="fill:#1f2328">scheduled job retries it on every run, for</text>
+<text x="348.0" y="1351.3" class="b" text-anchor="start" style="fill:#1f2328">up to 72 hours.</text>
+<rect x="640.0" y="1212.0" width="288.0" height="158.0" rx="8" fill="#ffebe9" stroke="#cf222e" stroke-width="1.25"/>
+<text x="652.0" y="1236.1" class="e" text-anchor="start" style="fill:#a40e26"><tspan class="m">error</tspan></text>
+<text x="652.0" y="1261.3" class="b" text-anchor="start" style="fill:#1f2328">Anything else, such as an amount</text>
+<text x="652.0" y="1279.3" class="b" text-anchor="start" style="fill:#1f2328">mismatch, or a transient failure past 72</text>
+<text x="652.0" y="1297.3" class="b" text-anchor="start" style="fill:#1f2328">hours. Not retried: fix the cause, then use</text>
+<text x="652.0" y="1315.3" class="b" text-anchor="start" style="fill:#1f2328">Retry on the queue record.</text>
+</svg>

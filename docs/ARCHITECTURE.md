@@ -20,6 +20,8 @@
 
 ## Payment flow
 
+[WORKFLOWS.md](WORKFLOWS.md) has diagrams of these flows.
+
 1. The processor injects Square SDK configuration and the card container into
    CiviCRM's billing block.
 2. The browser checks that the card form's postal code matches the billing

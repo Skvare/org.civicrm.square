@@ -1,0 +1,75 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="960" height="1003" viewBox="0 0 960 1003" role="img" aria-labelledby="title desc">
+<title id="title">One-time payment</title>
+<desc id="desc">Sequence of a one-time Square payment from a CiviCRM form, and what CiviCRM records for each outcome.</desc>
+<defs><style>
+text { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif; fill: #1f2328; }
+.m { font-family: ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas, monospace; font-size: 0.92em; }
+.t { font-size: 22px; font-weight: 600; }
+.st { font-size: 14px; fill: #59636e; }
+.h { font-size: 14.5px; font-weight: 600; }
+.b { font-size: 13.5px; }
+.s { font-size: 12.5px; fill: #59636e; }
+.e { font-size: 13.5px; font-weight: 600; }
+.lane { font-size: 15px; font-weight: 600; fill: #ffffff; }
+.lanesub { font-size: 12.5px; fill: #ffffff; fill-opacity: .85; }
+.halo { paint-order: stroke; stroke: #ffffff; stroke-width: 5px; stroke-linejoin: round; }
+.sec { font-size: 16px; font-weight: 600; }
+.tag { font-size: 12px; font-weight: 600; fill: #59636e; }
+</style><marker id="a-arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#424a53"/></marker><marker id="a-ok" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#1a7f37"/></marker><marker id="a-bad" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#cf222e"/></marker><marker id="a-wait" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#9a6700"/></marker><marker id="a-muted" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#59636e"/></marker></defs>
+<rect x="0.5" y="0.5" width="959" height="1002" rx="12" fill="#ffffff" stroke="#d1d9e0"/>
+<line x1="150" y1="167" x2="150" y2="575" stroke="#afb8c1" stroke-width="1.25" stroke-dasharray="4 4"/>
+<line x1="440" y1="167" x2="440" y2="575" stroke="#afb8c1" stroke-width="1.25" stroke-dasharray="4 4"/>
+<line x1="800" y1="167" x2="800" y2="575" stroke="#afb8c1" stroke-width="1.25" stroke-dasharray="4 4"/>
+<text x="32.0" y="48.0" class="t" text-anchor="start">One-time payment</text>
+<text x="32.0" y="74.0" class="st" text-anchor="start">Card details go from the donor's browser straight to Square. CiviCRM only ever handles a single-use token.</text>
+<rect x="35.0" y="113" width="230" height="54" rx="8" fill="#0969da"/>
+<text x="150.0" y="136.0" class="lane" text-anchor="middle">Donor's browser</text>
+<text x="150.0" y="155.0" class="lanesub" text-anchor="middle">js/square.js</text>
+<rect x="325.0" y="113" width="230" height="54" rx="8" fill="#8250df"/>
+<text x="440.0" y="136.0" class="lane" text-anchor="middle">CiviCRM</text>
+<text x="440.0" y="155.0" class="lanesub" text-anchor="middle">Square payment processor</text>
+<rect x="685.0" y="113" width="230" height="54" rx="8" fill="#1f2328"/>
+<text x="800.0" y="136.0" class="lane" text-anchor="middle">Square</text>
+<text x="800.0" y="155.0" class="lanesub" text-anchor="middle">Square APIs</text>
+<text x="295.0" y="202.5" class="b halo" text-anchor="middle">Billing form with the Square card field</text>
+<path d="M440.0,215.0 L153.0,215.0" fill="none" stroke="#424a53" stroke-width="1.5" marker-end="url(#a-arrow)"/>
+<text x="475.0" y="254.5" class="b halo" text-anchor="middle"><tspan class="m">card.tokenize()</tspan> with buyer verification</text>
+<path d="M150.0,267.0 L797.0,267.0" fill="none" stroke="#424a53" stroke-width="1.5" marker-end="url(#a-arrow)"/>
+<text x="475.0" y="285.0" class="s halo" text-anchor="middle">intent CHARGE, with the amount, currency and billing details</text>
+<text x="475.0" y="324.5" class="b halo" text-anchor="middle">Single-use card token</text>
+<path d="M800.0,337.0 L153.0,337.0" fill="none" stroke="#424a53" stroke-width="1.5" stroke-dasharray="6 4" marker-end="url(#a-arrow)"/>
+<text x="475.0" y="355.0" class="s halo" text-anchor="middle">after a 3-D Secure challenge, if the donor's bank asks for one</text>
+<text x="295.0" y="394.5" class="b halo" text-anchor="middle">Submit with <tspan class="m">square_payment_token</tspan></text>
+<path d="M150.0,407.0 L437.0,407.0" fill="none" stroke="#424a53" stroke-width="1.5" marker-end="url(#a-arrow)"/>
+<text x="620.0" y="446.5" class="b halo" text-anchor="middle"><tspan class="m">CreatePayment</tspan></text>
+<path d="M440.0,459.0 L797.0,459.0" fill="none" stroke="#424a53" stroke-width="1.5" marker-end="url(#a-arrow)"/>
+<text x="620.0" y="477.0" class="s halo" text-anchor="middle">token, amount, location and Square customer;</text>
+<text x="620.0" y="493.0" class="s halo" text-anchor="middle">reference_id and idempotency key come from the</text>
+<text x="620.0" y="509.0" class="s halo" text-anchor="middle">CiviCRM invoice ID</text>
+<text x="620.0" y="548.5" class="b halo" text-anchor="middle">The payment and its status</text>
+<path d="M800.0,561.0 L443.0,561.0" fill="none" stroke="#424a53" stroke-width="1.5" stroke-dasharray="6 4" marker-end="url(#a-arrow)"/>
+<text x="32" y="609" class="sec">What CiviCRM records</text>
+<rect x="32.0" y="623.0" width="440.0" height="86.0" rx="8" fill="#dafbe1" stroke="#1a7f37" stroke-width="1.25"/>
+<text x="44.0" y="647.1" class="h" text-anchor="start" style="fill:#116329">Square reports COMPLETED</text>
+<text x="44.0" y="672.3" class="b" text-anchor="start" style="fill:#1f2328">Contribution Completed. Its transaction ID is the Square payment</text>
+<text x="44.0" y="690.3" class="b" text-anchor="start" style="fill:#1f2328">ID.</text>
+<rect x="488.0" y="623.0" width="440.0" height="86.0" rx="8" fill="#fff8c5" stroke="#9a6700" stroke-width="1.25"/>
+<text x="500.0" y="647.1" class="h" text-anchor="start" style="fill:#7d4e00">Square reports APPROVED or PENDING</text>
+<text x="500.0" y="672.3" class="b" text-anchor="start" style="fill:#1f2328">Contribution stays Pending until the <tspan class="m">payment.updated</tspan> webhook</text>
+<text x="500.0" y="690.3" class="b" text-anchor="start" style="fill:#1f2328">completes it.</text>
+<rect x="32.0" y="725.0" width="440.0" height="122.0" rx="8" fill="#ffebe9" stroke="#cf222e" stroke-width="1.25"/>
+<text x="44.0" y="749.1" class="h" text-anchor="start" style="fill:#a40e26">Card declined, or request rejected</text>
+<text x="44.0" y="774.3" class="b" text-anchor="start" style="fill:#1f2328">Nothing was charged. The checkout shows the error and marks</text>
+<text x="44.0" y="792.3" class="b" text-anchor="start" style="fill:#1f2328">the contribution Failed.</text>
+<rect x="488.0" y="725.0" width="440.0" height="122.0" rx="8" fill="#fff8c5" stroke="#9a6700" stroke-width="1.25"/>
+<text x="500.0" y="749.1" class="h" text-anchor="start" style="fill:#7d4e00">No answer from Square (timeout, 5xx)</text>
+<text x="500.0" y="774.3" class="b" text-anchor="start" style="fill:#1f2328">The card may have been charged. A contribution page keeps the</text>
+<text x="500.0" y="792.3" class="b" text-anchor="start" style="fill:#1f2328">contribution Pending for <tspan class="m">payment.updated</tspan> to complete; event</text>
+<text x="500.0" y="810.3" class="b" text-anchor="start" style="fill:#1f2328">registration reports a failure. An error is logged to check in the</text>
+<text x="500.0" y="828.3" class="b" text-anchor="start" style="fill:#1f2328">Square Dashboard.</text>
+<rect x="32" y="865.0" width="896" height="86.0" rx="8" fill="#ddf4ff" stroke="#0969da" stroke-width="1.25"/>
+<text x="44.0" y="889.1" class="h" text-anchor="start" style="fill:#0550ae">Later, by webhook</text>
+<text x="44.0" y="914.3" class="b" text-anchor="start" style="fill:#1f2328"><tspan class="m">payment.updated</tspan> completes a Pending contribution with <tspan class="m">Payment.create</tspan>, matching it by transaction ID or reference_id. A later</text>
+<text x="44.0" y="932.3" class="b" text-anchor="start" style="fill:#1f2328"><tspan class="m">payment.updated</tspan> carries Square's processing fee, which becomes the contribution's fee.</text>
+<text x="32.0" y="976.8" class="s" text-anchor="start">A zero amount (for example a 100% discount) is completed without contacting Square.</text>
+</svg>

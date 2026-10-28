@@ -5,6 +5,7 @@ Choose the guide that matches your work:
 | Guide | Audience | Purpose |
 |---|---|---|
 | [Overview](OVERVIEW.html) | Everyone | One-page visual summary — what it does, how it was built, how it's used. Open in a browser. |
+| [Workflows](WORKFLOWS.md) | Everyone | Diagrams of one-time and recurring payments, installment webhooks, and webhook processing. |
 | [Installation](INSTALLATION.md) | Administrators | Requirements, installation, upgrades, and uninstallation. |
 | [Configuration](CONFIGURATION.md) | Administrators | Credentials, sandbox verification, and production go-live. |
 | [Webhooks](WEBHOOKS.md) | Administrators and support | Webhook setup, processing lifecycle, and troubleshooting. |

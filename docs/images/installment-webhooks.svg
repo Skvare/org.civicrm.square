@@ -1,0 +1,71 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="960" height="694" viewBox="0 0 960 694" role="img" aria-labelledby="title desc">
+<title id="title">Subscription installment webhooks</title>
+<desc id="desc">The Square webhooks for each subscription installment, paid or declined, and how subscription changes reach CiviCRM.</desc>
+<defs><style>
+text { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif; fill: #1f2328; }
+.m { font-family: ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas, monospace; font-size: 0.92em; }
+.t { font-size: 22px; font-weight: 600; }
+.st { font-size: 14px; fill: #59636e; }
+.h { font-size: 14.5px; font-weight: 600; }
+.b { font-size: 13.5px; }
+.s { font-size: 12.5px; fill: #59636e; }
+.e { font-size: 13.5px; font-weight: 600; }
+.lane { font-size: 15px; font-weight: 600; fill: #ffffff; }
+.lanesub { font-size: 12.5px; fill: #ffffff; fill-opacity: .85; }
+.halo { paint-order: stroke; stroke: #ffffff; stroke-width: 5px; stroke-linejoin: round; }
+.sec { font-size: 16px; font-weight: 600; }
+.tag { font-size: 12px; font-weight: 600; fill: #59636e; }
+</style><marker id="a-arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#424a53"/></marker><marker id="a-ok" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#1a7f37"/></marker><marker id="a-bad" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#cf222e"/></marker><marker id="a-wait" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#9a6700"/></marker><marker id="a-muted" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#59636e"/></marker></defs>
+<rect x="0.5" y="0.5" width="959" height="693" rx="12" fill="#ffffff" stroke="#d1d9e0"/>
+<text x="32.0" y="48.0" class="t" text-anchor="start">Subscription installment webhooks</text>
+<text x="32.0" y="74.0" class="st" text-anchor="start">Square sends these for every installment, the first included. They can arrive in any order; an event that arrives before the records it needs</text>
+<text x="32.0" y="93.0" class="st" text-anchor="start">is retried.</text>
+<rect x="448" y="138.0" width="270" height="156.0" rx="8" fill="#dafbe1" stroke="#1a7f37" stroke-width="1.25"/>
+<text x="460.0" y="162.1" class="h" text-anchor="start" style="fill:#116329">Paid</text>
+<text x="460.0" y="188.1" class="e" text-anchor="start" style="fill:#116329"><tspan class="m">payment.updated</tspan> COMPLETED</text>
+<text x="460.0" y="214.1" class="e" text-anchor="start" style="fill:#116329"><tspan class="m">invoice.payment_made</tspan> PAID</text>
+<text x="460.0" y="239.3" class="b" text-anchor="start" style="fill:#1f2328">Whichever arrives first records the</text>
+<text x="460.0" y="257.3" class="b" text-anchor="start" style="fill:#1f2328">installment. The other finds it recorded</text>
+<text x="460.0" y="275.3" class="b" text-anchor="start" style="fill:#1f2328">and changes nothing.</text>
+<rect x="448" y="320.0" width="270" height="166.0" rx="8" fill="#ffebe9" stroke="#cf222e" stroke-width="1.25"/>
+<text x="460.0" y="344.1" class="h" text-anchor="start" style="fill:#a40e26">Declined</text>
+<text x="460.0" y="370.1" class="e" text-anchor="start" style="fill:#a40e26"><tspan class="m">invoice.scheduled_charge_failed</tspan></text>
+<text x="460.0" y="395.3" class="b" text-anchor="start" style="fill:#1f2328">A later installment is marked Failed;</text>
+<text x="460.0" y="413.3" class="b" text-anchor="start" style="fill:#1f2328">the first stays Pending while Square</text>
+<text x="460.0" y="431.3" class="b" text-anchor="start" style="fill:#1f2328">keeps its invoice open. Ignored if</text>
+<text x="460.0" y="449.3" class="b" text-anchor="start" style="fill:#1f2328">Square reports the invoice paid by</text>
+<text x="460.0" y="467.3" class="b" text-anchor="start" style="fill:#1f2328">then.</text>
+<rect x="32" y="266.5" width="178" height="86.0" rx="8" fill="#f6f8fa" stroke="#d1d9e0" stroke-width="1.25"/>
+<text x="44.0" y="290.6" class="e" text-anchor="start" style="fill:#1f2328"><tspan class="m">invoice.created</tspan></text>
+<text x="44.0" y="315.8" class="b" text-anchor="start" style="fill:#1f2328">A draft invoice. Nothing</text>
+<text x="44.0" y="333.8" class="b" text-anchor="start" style="fill:#1f2328">is recorded yet.</text>
+<rect x="246" y="278.5" width="150" height="62.0" rx="8" fill="#1f2328" stroke="#1f2328" stroke-width="1.25"/>
+<text x="321.0" y="302.6" class="h" text-anchor="middle" style="fill:#ffffff">Square charges</text>
+<text x="321.0" y="321.6" class="h" text-anchor="middle" style="fill:#ffffff">the card on file</text>
+<path d="M210.0,309.5 L243.0,309.5" fill="none" stroke="#424a53" stroke-width="1.5" marker-end="url(#a-arrow)"/>
+<path d="M396.0,309.5 L422.0,309.5 L422.0,216.0 L445.0,216.0" fill="none" stroke="#1a7f37" stroke-width="1.5" marker-end="url(#a-ok)"/>
+<path d="M422.0,309.5 L422.0,403.0 L445.0,403.0" fill="none" stroke="#cf222e" stroke-width="1.5" marker-end="url(#a-bad)"/>
+<rect x="752" y="142.0" width="176" height="148.0" rx="8" fill="#f6f8fa" stroke="#d1d9e0" stroke-width="1.25"/>
+<text x="764.0" y="166.1" class="h" text-anchor="start" style="fill:#1f2328">Later</text>
+<text x="764.0" y="192.1" class="e" text-anchor="start" style="fill:#1f2328"><tspan class="m">payment.updated</tspan></text>
+<text x="764.0" y="217.3" class="b" text-anchor="start" style="fill:#1f2328">Carries Square's</text>
+<text x="764.0" y="235.3" class="b" text-anchor="start" style="fill:#1f2328">processing fee, which</text>
+<text x="764.0" y="253.3" class="b" text-anchor="start" style="fill:#1f2328">becomes the</text>
+<text x="764.0" y="271.3" class="b" text-anchor="start" style="fill:#1f2328">contribution's fee.</text>
+<path d="M718.0,216.0 L749.0,216.0" fill="none" stroke="#1a7f37" stroke-width="1.5" marker-end="url(#a-ok)"/>
+<path d="M718.0,403.0 L749.0,403.0" fill="none" stroke="#59636e" stroke-width="1.25" stroke-dasharray="6 4" marker-end="url(#a-muted)"/>
+<text x="756.0" y="382.8" class="s" text-anchor="start">If Square collects a declined</text>
+<text x="756.0" y="398.8" class="s" text-anchor="start">invoice later, the Paid events</text>
+<text x="756.0" y="414.8" class="s" text-anchor="start">record it on the same</text>
+<text x="756.0" y="430.8" class="s" text-anchor="start">contribution.</text>
+<text x="32" y="536" class="sec">Subscription changes</text>
+<rect x="32" y="550.0" width="896" height="120.0" rx="8" fill="#ffffff" stroke="#d1d9e0" stroke-width="1.25"/>
+<text x="59.0" y="573.3" class="b" text-anchor="start" style="fill:#1f2328"><tspan class="m">subscription.created</tspan> and <tspan class="m">subscription.updated</tspan> copy the subscription's status and amount to the recurring contribution.</text>
+<text x="46" y="573.3" class="b" style="fill:#1f2328">•</text>
+<text x="59.0" y="594.3" class="b" text-anchor="start" style="fill:#1f2328">A cancellation made in Square arrives as <tspan class="m">subscription.updated</tspan> with a canceled_date. Square keeps the subscription ACTIVE until</text>
+<text x="59.0" y="612.3" class="b" text-anchor="start" style="fill:#1f2328">that date, so CiviCRM marks the recurring contribution Cancelled straight away, with that cancel date.</text>
+<text x="46" y="594.3" class="b" style="fill:#1f2328">•</text>
+<text x="59.0" y="633.3" class="b" text-anchor="start" style="fill:#1f2328">Square's status never moves a recurring contribution back to Pending, or to In Progress before its first payment is recorded. Recording</text>
+<text x="59.0" y="651.3" class="b" text-anchor="start" style="fill:#1f2328">that payment is what moves it to In Progress.</text>
+<text x="46" y="633.3" class="b" style="fill:#1f2328">•</text>
+</svg>

@@ -58,6 +58,9 @@ Unsupported events are acknowledged but not processed.
 
 ## Recurring installments
 
+[WORKFLOWS.md](WORKFLOWS.md#subscription-installment-webhooks) has diagrams of
+the steps below.
+
 Square charges every installment of a subscription itself, including the
 first. Its webhooks for an installment are, in order: `invoice.created` (a
 draft — nothing is recorded), then `payment.updated` and
