@@ -57,6 +57,17 @@ class CRM_Core_Payment_Square_SubscriptionsTest extends CRM_Core_Payment_Square_
   }
 
   /**
+   * CiviCRM's back-office membership form names the currency currencyID.
+   */
+  public function testPlanIsPricedInCurrencyIdWhenNoCurrencyIsGiven(): void {
+    $params = $this->params(['currencyID' => 'CAD']);
+    unset($params['currency']);
+    $this->subscriptions()->getPlanVariationIdForParams($params);
+
+    $this->assertSame('CAD', $this->onlyPhase()->getPricing()->getPriceMoney()->getCurrency());
+  }
+
+  /**
    * An open-ended one sends no periods at all (0 would mean no periods).
    *
    * @dataProvider openEndedProvider

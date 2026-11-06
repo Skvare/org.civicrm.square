@@ -46,6 +46,31 @@ if (!class_exists('CRM_Core_Payment')) {
     // phpcs:ignore Drupal.NamingConventions.ValidVariableName, PSR2.Classes.PropertyDeclaration.Underscore
     protected $_component;
 
+    /**
+     * Whether staff are taking the payment on a back-office form.
+     *
+     * @var bool
+     */
+    protected $backOffice = FALSE;
+
+    /**
+     * As core's.
+     *
+     * @return bool
+     */
+    public function isBackOffice() {
+      return $this->backOffice;
+    }
+
+    /**
+     * As core's.
+     *
+     * @param bool $isBackOffice
+     */
+    public function setBackOffice($isBackOffice) {
+      $this->backOffice = $isBackOffice;
+    }
+
   }
 }
 if (!class_exists('CRM_Core_Exception')) {

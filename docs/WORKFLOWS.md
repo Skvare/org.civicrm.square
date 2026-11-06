@@ -18,6 +18,15 @@ checkout: Square charges the first installment itself, within seconds.
 
 ![Recurring contribution signup sequence](images/recurring-signup.svg)
 
+## Back-office payments
+
+Staff use the same two flows on CiviCRM's back-office credit card forms, keying
+in the payer's card. Square is told the payment is keyed in by the seller (MOTO),
+both when the card is tokenized and in `CreatePayment`, so it does not ask staff
+to verify as the buyer. **Submit Credit Card Payment**, which adds a payment to
+an existing contribution, has no invoice reference of its own: its idempotency
+key comes from the single-use card token instead.
+
 ## Subscription installment webhooks
 
 The events Square sends for each installment, paid or declined, and how

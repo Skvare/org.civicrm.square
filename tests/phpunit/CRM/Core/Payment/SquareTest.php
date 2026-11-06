@@ -172,6 +172,59 @@ class CRM_Core_Payment_SquareTest extends TestCase {
     $this->assertSame('', json_decode($form->assigned['squareJSVarsJson'], TRUE)['locationId']);
   }
 
+  public function testStaffCanTakeCardPaymentsOnBackOfficeForms(): void {
+    $this->assertTrue($this->processor()->supportsBackOffice());
+  }
+
+  /**
+   * The card form (js/square.js) learns whether staff key in the card.
+   *
+   * It then flags the payment to Square as keyed in by the seller (MOTO).
+   *
+   * @dataProvider backOfficeFormProvider
+   */
+  public function testBuildFormTellsTheCardFormWhetherStaffEnterTheCard(?bool $formIsBackOffice, bool $processorIsBackOffice, bool $expected): void {
+    $processor = $this->processor();
+    $processor->setBackOffice($processorIsBackOffice);
+    $form = new class() {
+
+      /**
+       * As CiviCRM's payment forms declare it; NULL for a form that does not.
+       *
+       * @var bool|null
+       */
+      public ?bool $isBackOffice = NULL;
+
+      /**
+       * @var array
+       */
+      public array $assigned = [];
+
+      public function elementExists($name) {
+        return TRUE;
+      }
+
+      public function assign($name, $value) {
+        $this->assigned[$name] = $value;
+      }
+
+    };
+    $form->isBackOffice = $formIsBackOffice;
+
+    $processor->buildForm($form);
+
+    $this->assertSame($expected, json_decode($form->assigned['squareJSVarsJson'], TRUE)['isBackOffice']);
+  }
+
+  public static function backOfficeFormProvider(): array {
+    return [
+      'back-office form' => [TRUE, FALSE, TRUE],
+      'front-end form' => [FALSE, TRUE, FALSE],
+      'form that does not say, processor set for back office' => [NULL, TRUE, TRUE],
+      'form that does not say, processor not set' => [NULL, FALSE, FALSE],
+    ];
+  }
+
   /**
    * A processor whose Square refund comes back with the given statuses.
    *

@@ -51,10 +51,47 @@ class CRM_Core_Payment_Square_RequestShapeTest extends CRM_Core_Payment_Square_S
     $this->assertSame('location-id', $captured->getLocationId());
     $this->assertSame('inv-42', $captured->getReferenceId());
     $this->assertNull($captured->getCustomerId(), 'No contactID was supplied, so no customer lookup/attachment should occur.');
+    $this->assertNull($captured->getCustomerDetails(), 'The payer entered the card: not a MOTO payment.');
     $this->assertNotEmpty($captured->getIdempotencyKey());
     $this->assertLessThanOrEqual(45, strlen($captured->getIdempotencyKey()));
 
     $this->assertSame('pay_1', $result['trxn_id']);
+  }
+
+  public function testBackOfficePaymentIsFlaggedAsKeyedInBySeller(): void {
+    [$processor, $captured] = $this->paymentRecordingProcessor();
+    $processor->setBackOffice(TRUE);
+    $params = [
+      'square_payment_token' => 'cnon:staff',
+      'amount' => '20.00',
+      'currency' => 'USD',
+      'invoiceID' => 'inv-staff',
+    ];
+    $processor->doPayment($params);
+
+    $customerDetails = $captured[0]->getCustomerDetails();
+    $this->assertNotNull($customerDetails);
+    $this->assertFalse($customerDetails->getCustomerInitiated());
+    $this->assertTrue($customerDetails->getSellerKeyedIn());
+  }
+
+  /**
+   * CiviCRM's back-office "Submit Credit Card Payment" form passes no reference.
+   */
+  public function testBackOfficePaymentWithoutACheckoutReferenceIsKeyedOnItsCardToken(): void {
+    [$processor, $captured] = $this->paymentRecordingProcessor();
+    $processor->setBackOffice(TRUE);
+    foreach (['cnon:first', 'cnon:first', 'cnon:second'] as $token) {
+      $params = ['square_payment_token' => $token, 'amount' => '5.00', 'currency' => 'USD'];
+      $result = $processor->doPayment($params);
+      $this->assertSame('pay_' . count($captured), $result['trxn_id']);
+    }
+
+    $this->assertCount(3, $captured);
+    $this->assertSame($captured[0]->getIdempotencyKey(), $captured[1]->getIdempotencyKey(), 'A re-posted form carries the same token, so Square sees a retry.');
+    $this->assertNotSame($captured[0]->getIdempotencyKey(), $captured[2]->getIdempotencyKey(), 'A new card token is a new payment.');
+    $this->assertLessThanOrEqual(45, strlen($captured[2]->getIdempotencyKey()));
+    $this->assertNull($captured[0]->getReferenceId());
   }
 
   public function testOneTimePaymentInACurrencyWithoutCentsIsNotMultiplied(): void {
@@ -89,6 +126,11 @@ class CRM_Core_Payment_Square_RequestShapeTest extends CRM_Core_Payment_Square_S
     $this->assertNull($captured->getReferenceId());
   }
 
+  /**
+   * Only back-office forms may omit it.
+   *
+   * See testBackOfficePaymentWithoutACheckoutReferenceIsKeyedOnItsCardToken().
+   */
   public function testOneTimePaymentFailsClosedWithoutACheckoutReference(): void {
     $paymentsMock = $this->createMock(PaymentsClient::class);
     $paymentsMock->expects($this->never())->method('create');
@@ -168,6 +210,24 @@ class CRM_Core_Payment_Square_RequestShapeTest extends CRM_Core_Payment_Square_S
     $this->assertSame($first[0]->getIdempotencyKey(), $retry[0]->getIdempotencyKey());
     // ...but a further $5 refund of the payment is a new refund.
     $this->assertNotSame($first[0]->getIdempotencyKey(), $second[0]->getIdempotencyKey());
+  }
+
+  /**
+   * A processor with a mocked Square, capturing payment requests.
+   *
+   * @return array
+   *   The processor, and an \ArrayObject receiving each CreatePaymentRequest
+   *   sent. Square answers the Nth with COMPLETED payment pay_N.
+   */
+  private function paymentRecordingProcessor(): array {
+    $captured = new ArrayObject();
+    $paymentsMock = $this->createMock(PaymentsClient::class);
+    $paymentsMock->method('create')->willReturnCallback(function (CreatePaymentRequest $request) use ($captured) {
+      $captured[] = $request;
+      $payment = new Payment(['id' => 'pay_' . count($captured), 'status' => 'COMPLETED']);
+      return new CreatePaymentResponse(['payment' => $payment]);
+    });
+    return [$this->processorWithMockClient(['payments' => $paymentsMock]), $captured];
   }
 
   /**

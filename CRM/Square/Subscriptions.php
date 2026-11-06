@@ -121,7 +121,8 @@ class CRM_Square_Subscriptions {
   public function getPlanVariationIdForParams(array $params): string {
     $entity = $params['component'] ?? 'contribute';
     $amount = (float) ($params['amount'] ?? 0);
-    $currency = $params['currency'] ?? 'USD';
+    // CiviCRM's back-office membership form passes only currencyID.
+    $currency = $params['currency'] ?? $params['currencyID'] ?? 'USD';
     $intervalUnit = $params['frequency_unit'] ?? '';
     $intervalStep = (int) ($params['frequency_interval'] ?? 1);
     $installments = (int) ($params['installments'] ?? 0);

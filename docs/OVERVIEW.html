@@ -340,7 +340,7 @@
     <section id="overview">
       <p class="kicker">Overview</p>
       <h2 class="section-title">What this extension does</h2>
-      <p class="lede">org.civicrm.square registers Square as a CiviCRM payment processor type — the same role Stripe or PayPal extensions play — so contribution pages, event registration, and Drupal webforms can charge a Square-issued card without CiviCRM ever seeing the card number.</p>
+      <p class="lede">org.civicrm.square registers Square as a CiviCRM payment processor type — the same role Stripe or PayPal extensions play — so contribution pages, event registration, Drupal webforms, and staff on CiviCRM's back-office credit card forms can charge a Square-issued card without CiviCRM ever seeing the card number.</p>
       <p>It depends on two core CiviCRM extensions, <code>mjwshared</code> and <code>civi_contribute</code>, and is built against CiviCRM 6.16 or later. Composer dependencies ship committed in <code>vendor/</code>, so installing it is a normal extension enable — no build step. It is developed and maintained by Skvare, distributed under AGPL-3.0-or-later.</p>
       <div class="callout"><strong>Why it exists:</strong> Needed dues, tournament entry, and donation payments to run through Square rather than the processors CiviCRM ships with out of the box, with the same card-on-file and recurring-billing experience members already expect from CiviCRM's native processors.</div>
     </section>
@@ -444,7 +444,7 @@
             <tr><td class="mono">CRM/Core/Payment/SquareIPN.php</td><td>Webhook filtering, signature verification, deduplication, queue persistence, processing.</td></tr>
             <tr><td class="mono">CRM/Core/Payment/SquareDebugLogger.php</td><td>Opt-in diagnostic logging, gated by a setting so it's off by default.</td></tr>
             <tr><td class="mono">CRM/Square/Upgrader.php</td><td>Creates <code>square_customer_map</code> and <code>square_catalog_map</code>, and drops them on uninstall.</td></tr>
-            <tr><td class="mono">js/square.js</td><td>Mounts the Square card element and tokenizes on submit, across native and Webform forms; keeps the card form's ZIP in step with the billing address's.</td></tr>
+            <tr><td class="mono">js/square.js</td><td>Mounts the Square card element and tokenizes on submit, across native, Webform and back-office forms (flagging staff-keyed cards as MOTO); keeps the card form's ZIP in step with the billing address's.</td></tr>
             <tr><td class="mono">managed/PaymentProcessorType.mgd.php</td><td>Registers "Square" as a selectable payment processor type.</td></tr>
           </tbody>
         </table>

@@ -5,7 +5,9 @@
    * Supports:
    *  - CiviCRM native contribution pages and event registration forms
    *  - Drupal Webform (webform_civicrm module) billing blocks
-   *  - Backend contribution / event forms
+   *  - Back-office contribution, membership, event registration and payment
+   *    forms, on a page or in a popup, where staff key in the payer's card
+   *    (flagged to Square as MOTO)
    *
    * Architecture mirrors Stripe (civicrmStripe.js) and AuthNet (civicrmAuthNetAccept.js):
    *  - CRM.squarePayment  — shared form-utility object (equivalent to CRM.payment in mjwshared)
@@ -166,7 +168,11 @@
           $(this).closest('div').next('div').find('input[type="checkbox"]').addClass('required');
         });
         $('div#priceset input[type="checkbox"], fieldset.crm-profile input[type="checkbox"], #on-behalf-block input[type="checkbox"]').each(function() {
-          var name = $(this).attr('name');
+          // The original name, if an earlier call (or another processor's
+          // script) already renamed the checkbox: the billing block, and so
+          // this, is reloaded whenever the processor or amount changes.
+          var name = $(this).attr('data-name') || $(this).attr('name');
+          if (!name) return;
           $(this).attr('data-name', name);
           $(this).attr('name', name.replace('[' + name.split('[').pop(), ''));
         });
@@ -188,6 +194,18 @@
         for (var i = 0; i < this.submitButtons.length; ++i) {
           this.submitButtons[i].setAttribute('disabled', true);
         }
+        this.submitForm();
+      },
+
+      /**
+       * Submit the billing form, bypassing its submit event handlers.
+       *
+       * CiviCRM turns off its "You have unsaved changes" warning in a submit
+       * event handler, which form.submit() does not fire. Back-office forms
+       * warn of unsaved changes, so turn it off here, as that handler would.
+       */
+      submitForm: function() {
+        $('[data-warn-changes]').attr('data-warn-changes', 'false');
         this.resetBillingFieldsRequiredForJQueryValidate();
         this.form.submit();
       },
@@ -342,6 +360,9 @@
       cardPostalCode: '',
       // The value this script last copied into the billing postal code field.
       autofilledPostalCode: null,
+      // Whether this script renamed the form's checkboxes for jQuery
+      // validation (see setBillingFieldsRequiredForJQueryValidate()).
+      billingFieldsAdjusted: false,
       billingPostalCodePattern: /billing_postal_code(-\d+)?\]?$/,
 
       debugging: function(msg) {
@@ -358,6 +379,7 @@
           currency:    cfg.currency || 'USD',
           countryIsoCodes: cfg.countryIsoCodes || {},
           isCardUpdate: !!cfg.isCardUpdate,
+          isBackOffice: !!cfg.isBackOffice,
         };
       },
 
@@ -416,6 +438,10 @@
        * STORE, as is a card update's. Square refuses an amount or currency for
        * STORE ("The STORE intent does not support the amount field."), even an
        * empty one: only CHARGE has them.
+       *
+       * On a back-office form staff key in the payer's card: a Mail Order /
+       * Telephone Order (MOTO) payment, which the payer did not initiate
+       * there. Square then does not ask staff to verify as the buyer.
        */
       getVerificationDetails: function(totalAmount) {
         var cfg = script.getConfig();
@@ -446,8 +472,8 @@
         var details = {
           billingContact: contact,
           intent: script.isRecurring() ? 'STORE' : 'CHARGE',
-          customerInitiated: true,
-          sellerKeyedIn: false
+          customerInitiated: !cfg.isBackOffice,
+          sellerKeyedIn: cfg.isBackOffice
         };
         if (details.intent === 'CHARGE') {
           details.amount = Number(totalAmount || 0).toFixed(2);
@@ -595,6 +621,18 @@
         if (typeof CRM.vars !== 'undefined') {
           delete CRM.vars.orgCivicrmSquare;
         }
+        // Step aside for the processor now selected (e.g. another one in a
+        // back-office form's processor list): its own script, or CiviCRM,
+        // submits the form, with the checkboxes' own names.
+        var form = CRM.squarePayment.form;
+        if (form) {
+          $('[type=submit]', form).off('click.square click.squareWebform');
+          $(form).off('change.squarePostalCode keydown.squareWebform');
+        }
+        if (script.billingFieldsAdjusted) {
+          CRM.squarePayment.resetBillingFieldsRequiredForJQueryValidate();
+          script.billingFieldsAdjusted = false;
+        }
         if (CRM.squarePayment.submitButtons) {
           $(CRM.squarePayment.submitButtons).show();
         }
@@ -668,6 +706,7 @@
 
       doAfterElementsHaveLoaded: function() {
         CRM.squarePayment.setBillingFieldsRequiredForJQueryValidate();
+        script.billingFieldsAdjusted = true;
         CRM.squarePayment.form.dataset.submitdontprocess = 'false';
         CRM.squarePayment.addHandlerNonPaymentSubmitButtons();
 
@@ -678,7 +717,9 @@
 
         function submitButtonClick(clickEvent) {
           if (typeof CRM.vars === 'undefined' || typeof CRM.vars.orgCivicrmSquare === 'undefined') {
-            return CRM.squarePayment.doStandardFormSubmit();
+            // Square is no longer the selected processor: leave the submit
+            // to the form, or to that processor's own script.
+            return;
           }
           CRM.squarePayment.form.dataset.submitdontprocess = 'false';
           return script.submit(clickEvent);
@@ -857,8 +898,7 @@
           }
           tokenField.value = result.token;
 
-          CRM.squarePayment.resetBillingFieldsRequiredForJQueryValidate();
-          CRM.squarePayment.form.submit();
+          CRM.squarePayment.submitForm();
         }
         catch(e) {
           // Logged whatever the debug setting: otherwise nothing says what failed.
@@ -952,5 +992,16 @@
         CRM.squarePayment.triggerEvent('crmBillingFormReloadComplete', script.name);
       }
     };
+
+    // Loaded with a billing block that arrived after the page did, e.g. a
+    // back-office form opened in a popup: DOMContentLoaded has fired already,
+    // and the request that brought it (such as civicrm/payment/add or
+    // civicrm/contribute/updatebilling) may not be one isAJAXPaymentForm()
+    // knows. Initialized now, as a reload is above; one that request does
+    // trigger is skipped while this one is still mounting the card form.
+    if (document.readyState !== 'loading') {
+      CRM.squarePayment.debugging(script.name, 'loaded after the page');
+      load();
+    }
 
   }(CRM.$, CRM.ts('org.civicrm.square')));

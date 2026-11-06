@@ -27,6 +27,7 @@ required after cloning/downloading — just enable the extension as usual
 - Refunds via Square Refunds API (`/v2/refunds`), recorded in CiviCRM once Square completes them
 - Subscription cancellation and amount changes synced to Square, and cancellations made in Square synced back to CiviCRM
 - Donors can replace the card a recurring contribution is charged to (CiviCRM's **Update billing details**)
+- Back-office card payments: staff can take one-time and recurring payments on CiviCRM's **Submit Credit Card Contribution / Membership / Event Registration** and **Submit Credit Card Payment** forms, flagged to Square as keyed in by the seller (MOTO)
 - Square Web Payments SDK for browser-side card tokenization — card details never pass through CiviCRM
 - Card form ZIP/postal code kept in step with the billing address's, so Square never sees two different ones
 - Card-on-file support through CiviCRM PaymentToken
@@ -150,8 +151,9 @@ deletes its mappings.
 
 - CiviCRM native contribution pages and event registration forms
 - Drupal Webform (webform_civicrm module) billing blocks, including AJAX reloads
+- CiviCRM's back-office credit card forms (contribution, membership signup and renewal, event registration, and **Submit Credit Card Payment** on an existing contribution), on a page or in a popup
 
-Back-office (staff-entered) card payments are not supported.
+On a back-office form staff key in the payer's card, so the payment is a Mail Order / Telephone Order (MOTO) one: `card.tokenize()` is told `customerInitiated: false` and `sellerKeyedIn: true` (Square then does not ask staff to verify as the buyer), and `CreatePayment` sends the same as its `customer_details`. CiviCRM's **Submit Credit Card Payment** form passes no invoice or contribution reference, so that payment's idempotency key is derived from its single-use card token instead; front-end checkouts without a reference are still refused. When staff switch the form to another payment processor, `square.js` stops handling the form's submit buttons, leaving them to that processor.
 
 Key globals:
 - `CRM.squarePayment` — Square's namespaced integration state

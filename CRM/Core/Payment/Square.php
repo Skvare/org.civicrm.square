@@ -7,6 +7,7 @@ use Civi\Api4\PaymentToken;
 use Civi\Payment\Exception\PaymentProcessorException;
 use Civi\Payment\PropertyBag;
 use Square\SquareClient;
+use Square\Types\CustomerDetails;
 use Square\Types\Money;
 use Square\Types\SubscriptionSource;
 use Square\Payments\Requests\CreatePaymentRequest;
@@ -20,7 +21,9 @@ use Square\Types\PaymentRefund;
  *
  * This processor supports:
  *  - One-off (non-recurring) card payments via Square Payments API
- *  - Recurring contributions via Square Subscriptions API.
+ *  - Recurring contributions via Square Subscriptions API
+ *  - Both on CiviCRM's back-office forms too, where staff enter the
+ *    payer's card (see supportsBackOffice()).
  *
  * Card details are never handled by CiviCRM directly. Instead, the
  * Square Web Payments SDK is used in the browser to tokenize the card
@@ -124,6 +127,9 @@ class CRM_Core_Payment_Square extends CRM_Core_Payment {
       // A new card for an existing recurring contribution: saved, not
       // charged (see updateSubscriptionBillingInfo()).
       'isCardUpdate' => $form instanceof CRM_Contribute_Form_UpdateBilling,
+      // Staff are keying in the payer's card (MOTO), so Square must not
+      // ask them to verify as the buyer.
+      'isBackOffice' => $this->isBackOfficeForm($form),
     ];
 
     // Add hidden field for the payment token.
@@ -163,6 +169,22 @@ class CRM_Core_Payment_Square extends CRM_Core_Payment {
     // building must continue as normal (CRM_Core_Payment::buildForm()'s
     // contract: FALSE = "continue normal form building").
     return FALSE;
+  }
+
+  /**
+   * Whether staff, not the payer, enter the card on this form.
+   *
+   * CiviCRM's payment forms declare it ($form->isBackOffice: TRUE on the
+   * back-office contribution, membership, event registration and payment
+   * forms, and on the billing block they reload). For any other form, fall
+   * back to what CiviCRM told this processor (setBackOffice()).
+   *
+   * @param \CRM_Core_Form $form
+   *
+   * @return bool
+   */
+  protected function isBackOfficeForm($form): bool {
+    return (bool) ($form->isBackOffice ?? $this->isBackOffice());
   }
 
   /**
@@ -513,14 +535,23 @@ class CRM_Core_Payment_Square extends CRM_Core_Payment {
     $amountMinorUnits = CRM_Square_Currency::toMinorUnits($amount, $currency);
 
     // 3. Idempotency key, derived from the checkout's own reference so that a
-    // retried request for the same checkout can never charge twice. Every
-    // CiviCRM checkout supplies one; without it a retry could not be told
-    // apart from a new payment, so refuse rather than risk a second charge.
+    // retried request for the same checkout can never charge twice. Without
+    // one a retry could not be told apart from a new payment, so refuse
+    // rather than risk a second charge.
     $paymentReference = $params['invoiceID'] ?? $params['invoice_id'] ?? $params['contributionID'] ?? $params['contribution_id'] ?? NULL;
-    if ($paymentReference === NULL || $paymentReference === '') {
+    $idempotencyReference = $paymentReference;
+    if (($paymentReference === NULL || $paymentReference === '') && $this->isBackOffice()) {
+      // CiviCRM's back-office "Submit Credit Card Payment" form, which adds a
+      // payment to an existing contribution, passes no reference. The card
+      // token is single-use, so it identifies this checkout instead: a
+      // re-posted form carries the same token, a new payment a new one.
+      $paymentReference = 'entered by staff for contact ' . ($params['contactID'] ?? $params['contact_id'] ?? 'unknown');
+      $idempotencyReference = 'card-token:' . $token;
+    }
+    if ($idempotencyReference === NULL || $idempotencyReference === '') {
       throw new \CRM_Core_Exception('Cannot take a Square payment without a CiviCRM invoice or contribution reference.');
     }
-    $idempotencyKey = $this->idempotencyKey('payment', (string) $paymentReference);
+    $idempotencyKey = $this->idempotencyKey('payment', (string) $idempotencyReference);
 
     // 4. Build payload for CreatePayment.
     $requestValues = [
@@ -529,6 +560,15 @@ class CRM_Core_Payment_Square extends CRM_Core_Payment {
       'amountMoney' => new Money(['amount' => $amountMinorUnits, 'currency' => $currency]),
       'locationId' => $this->getLocationId(),
     ];
+
+    // Staff keyed in the payer's card: a Mail Order / Telephone Order (MOTO)
+    // payment, as js/square.js told Square when tokenizing it.
+    if ($this->isBackOffice()) {
+      $requestValues['customerDetails'] = new CustomerDetails([
+        'customerInitiated' => FALSE,
+        'sellerKeyedIn' => TRUE,
+      ]);
+    }
 
     // Add customer ID if available (optional for one-off payments)
     $contactId = $params['contactID'] ?? $params['contact_id'] ?? NULL;
@@ -1191,15 +1231,19 @@ class CRM_Core_Payment_Square extends CRM_Core_Payment {
   }
 
   /**
-   * Whether processor supports back-office (admin) payments.
+   * Whether staff can take card payments with this processor on back-office forms.
    *
-   * For now, we only support front-end Web Payments SDK tokenization.
+   * They can: CiviCRM's back-office contribution, membership, event
+   * registration and "Submit Credit Card Payment" forms show Square's card
+   * form just as the front end does. Staff key in the payer's card, so
+   * js/square.js and doOneTimePayment() flag those payments to Square as
+   * Mail Order / Telephone Order (MOTO), and Square does not ask staff to
+   * verify as the buyer.
    *
    * @return bool
    */
   public function supportsBackOffice() {
-    // You can change this to TRUE if you later support card entry in admin UI.
-    return FALSE;
+    return TRUE;
   }
 
   /**
