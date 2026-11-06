@@ -175,6 +175,60 @@ class CRM_Core_Payment_Square_ExceptionHandlingTest extends CRM_Core_Payment_Squ
     $processor->doPayment($params, 'event');
   }
 
+  /**
+   * A back-office form with no contribution yet only handles PaymentProcessorException.
+   *
+   * @dataProvider backOfficeCheckoutWithoutAContributionProvider
+   */
+  public function testUnconfirmedChargeOnABackOfficeFormWithoutAContributionIsAPaymentFailure(array $params): void {
+    $paymentsMock = $this->createMock(PaymentsClient::class);
+    $paymentsMock->method('create')->willThrowException(new SquareException('connection timed out'));
+
+    $processor = $this->processorWithMockClient(['payments' => $paymentsMock]);
+    $processor->setBackOffice(TRUE);
+    $params += ['token' => 'cnon:timeout', 'amount' => '10.00'];
+
+    try {
+      // As those forms call it: without a component, even for an event.
+      $processor->doPayment($params);
+      $this->fail('An unconfirmed charge must throw.');
+    }
+    catch (PaymentProcessorException $e) {
+      // Staff read it, so it sends them to the Square Dashboard.
+      $this->assertStringContainsString('could not confirm', $e->getMessage());
+      $this->assertStringContainsString('Square Dashboard', $e->getMessage());
+      $this->assertInstanceOf(CRM_Core_Payment_SquareOutcomeUnknownException::class, $e->getPrevious());
+    }
+  }
+
+  public static function backOfficeCheckoutWithoutAContributionProvider(): array {
+    return [
+      'Submit Credit Card Payment' => [[]],
+      'event registration or membership renewal' => [['invoiceID' => 'inv-staff']],
+    ];
+  }
+
+  public function testUnconfirmedChargeKeepsABackOfficeFormsPendingContribution(): void {
+    $paymentsMock = $this->createMock(PaymentsClient::class);
+    $paymentsMock->method('create')->willThrowException(new SquareException('connection timed out'));
+
+    $processor = $this->processorWithMockClient(['payments' => $paymentsMock]);
+    $processor->setBackOffice(TRUE);
+    // As the back-office contribution and membership forms pass it.
+    $params = ['token' => 'cnon:timeout', 'amount' => '10.00', 'invoiceID' => 'inv-staff', 'contributionID' => 42];
+
+    try {
+      $processor->doPayment($params);
+      $this->fail('An unconfirmed charge must throw.');
+    }
+    catch (PaymentProcessorException $e) {
+      $this->fail('Square may have charged the card: CiviCRM must not mark the contribution Failed.');
+    }
+    catch (CRM_Core_Payment_SquareOutcomeUnknownException $e) {
+      $this->assertStringContainsString('Square Dashboard', $e->getMessage());
+    }
+  }
+
   public function testRejectedRequestIsAPaymentFailure(): void {
     $paymentsMock = $this->createMock(PaymentsClient::class);
     $paymentsMock->method('create')->willThrowException($this->apiException(400, [

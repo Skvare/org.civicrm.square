@@ -179,6 +179,12 @@ class CRM_Core_Payment_Square extends CRM_Core_Payment {
    * forms, and on the billing block they reload). For any other form, fall
    * back to what CiviCRM told this processor (setBackOffice()).
    *
+   * The form's own flag comes first because
+   * CRM_Core_Payment_Form::buildPaymentForm() calls buildForm() before
+   * setBackOffice(), so this processor's flag may not be set yet. By the
+   * time doPayment() runs it is, so the payment itself is flagged from
+   * that, never from anything the browser sends.
+   *
    * @param \CRM_Core_Form $form
    *
    * @return bool
@@ -442,10 +448,15 @@ class CRM_Core_Payment_Square extends CRM_Core_Payment {
       throw $e;
     }
     catch (CRM_Core_Payment_SquareOutcomeUnknownException $e) {
-      // Already logged. A contribution page keeps its Pending contribution
-      // for the webhook to complete; event registration only handles
-      // PaymentProcessorException, and has no contribution yet.
-      if ($component === 'event') {
+      // Already logged. A checkout that has already created its Pending
+      // contribution (a contribution page, or a back-office contribution or
+      // membership signup) keeps it for the webhook to complete: a
+      // PaymentProcessorException would have CiviCRM mark it Failed. One
+      // with no contribution yet handles only PaymentProcessorException:
+      // event registration, and the back-office event registration (which
+      // passes no component), membership renewal and "Submit Credit Card
+      // Payment" forms.
+      if ($component === 'event' || ($this->isBackOffice() && empty($params['contributionID']) && empty($params['contribution_id']))) {
         throw new PaymentProcessorException($e->getMessage(), 0, [], $e);
       }
       throw $e;
@@ -488,10 +499,11 @@ class CRM_Core_Payment_Square extends CRM_Core_Payment {
    */
   protected function paymentOutcomeUnknown(\Throwable $e, string $reference): CRM_Core_Payment_SquareOutcomeUnknownException {
     \Civi::log('square')->error("Square: could not confirm the outcome of {$reference} on payment processor {$this->processorId()}; check the Square Dashboard before the payer tries again. " . $e->getMessage(), ['exception' => $e]);
-    return new CRM_Core_Payment_SquareOutcomeUnknownException(
-      E::ts('We could not confirm whether your payment went through. Please do not pay again yet: contact us so we can check.'),
-      0, [], $e
-    );
+    // On a back-office form it is staff who read this, not the payer.
+    $message = $this->isBackOffice()
+      ? E::ts('We could not confirm whether this payment went through. Check the Square Dashboard before taking the payment again.')
+      : E::ts('We could not confirm whether your payment went through. Please do not pay again yet: contact us so we can check.');
+    return new CRM_Core_Payment_SquareOutcomeUnknownException($message, 0, [], $e);
   }
 
   /**
@@ -538,20 +550,26 @@ class CRM_Core_Payment_Square extends CRM_Core_Payment {
     // retried request for the same checkout can never charge twice. Without
     // one a retry could not be told apart from a new payment, so refuse
     // rather than risk a second charge.
-    $paymentReference = $params['invoiceID'] ?? $params['invoice_id'] ?? $params['contributionID'] ?? $params['contribution_id'] ?? NULL;
-    $idempotencyReference = $paymentReference;
-    if (($paymentReference === NULL || $paymentReference === '') && $this->isBackOffice()) {
+    $checkoutReference = (string) ($params['invoiceID'] ?? $params['invoice_id'] ?? $params['contributionID'] ?? $params['contribution_id'] ?? '');
+    $isKeyedOnCardToken = FALSE;
+    if ($checkoutReference !== '') {
+      $idempotencyReference = $checkoutReference;
+      // What is being paid, for the log.
+      $logReference = "payment {$checkoutReference}";
+    }
+    elseif ($this->isBackOffice()) {
       // CiviCRM's back-office "Submit Credit Card Payment" form, which adds a
       // payment to an existing contribution, passes no reference. The card
       // token is single-use, so it identifies this checkout instead: a
       // re-posted form carries the same token, a new payment a new one.
-      $paymentReference = 'entered by staff for contact ' . ($params['contactID'] ?? $params['contact_id'] ?? 'unknown');
       $idempotencyReference = 'card-token:' . $token;
+      $isKeyedOnCardToken = TRUE;
+      $logReference = 'back-office payment for contact ' . ($params['contactID'] ?? $params['contact_id'] ?? 'unknown');
     }
-    if ($idempotencyReference === NULL || $idempotencyReference === '') {
+    else {
       throw new \CRM_Core_Exception('Cannot take a Square payment without a CiviCRM invoice or contribution reference.');
     }
-    $idempotencyKey = $this->idempotencyKey('payment', (string) $idempotencyReference);
+    $idempotencyKey = $this->idempotencyKey('payment', $idempotencyReference);
 
     // 4. Build payload for CreatePayment.
     $requestValues = [
@@ -590,7 +608,7 @@ class CRM_Core_Payment_Square extends CRM_Core_Payment {
       $response = $this->callSquare(fn (SquareClient $client) => $client->payments->create(new CreatePaymentRequest($requestValues)));
     }
     catch (CRM_Core_Payment_SquareRetryableException $e) {
-      throw $this->paymentOutcomeUnknown($e, "payment {$paymentReference}");
+      throw $this->paymentOutcomeUnknown($e, $logReference);
     }
 
     // 6. Report the outcome; CiviCRM's checkout records the payment against
@@ -611,10 +629,43 @@ class CRM_Core_Payment_Square extends CRM_Core_Payment {
       $params['contribution_status_id'] = $params['payment_status_id'];
     }
     catch (\Throwable $e) {
-      throw $this->paymentOutcomeUnknown($e, "payment {$paymentReference}");
+      throw $this->paymentOutcomeUnknown($e, $logReference);
+    }
+
+    // A re-posted back-office form carries the same card token, so Square
+    // answers with the payment it already took. If CiviCRM has recorded
+    // that one, recording it again would pay the contribution twice.
+    if ($isKeyedOnCardToken) {
+      try {
+        $alreadyRecorded = $this->isPaymentRecorded($params['trxn_id']);
+      }
+      catch (\Throwable $e) {
+        // Square has taken the payment: record it, at worst twice, rather
+        // than report it as failed.
+        \Civi::log('square')->error("Square: could not check whether payment {$params['trxn_id']} ({$logReference}) is already recorded; recording it. " . $e->getMessage(), ['exception' => $e]);
+        $alreadyRecorded = FALSE;
+      }
+      if ($alreadyRecorded) {
+        throw new PaymentProcessorException(E::ts('This card payment was already taken and recorded (Square payment %1). It was not taken again.', [1 => $params['trxn_id']]));
+      }
     }
 
     return $params;
+  }
+
+  /**
+   * Whether CiviCRM has recorded a payment with this Square payment ID.
+   *
+   * @param string $trxnId
+   *
+   * @return bool
+   */
+  protected function isPaymentRecorded(string $trxnId): bool {
+    return Payment::get(FALSE)
+      ->addSelect('id')
+      ->addWhere('trxn_id', '=', $trxnId)
+      ->execute()
+      ->count() > 0;
   }
 
   /**

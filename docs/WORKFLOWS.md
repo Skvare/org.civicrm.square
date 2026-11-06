@@ -25,7 +25,16 @@ in the payer's card. Square is told the payment is keyed in by the seller (MOTO)
 both when the card is tokenized and in `CreatePayment`, so it does not ask staff
 to verify as the buyer. **Submit Credit Card Payment**, which adds a payment to
 an existing contribution, has no invoice reference of its own: its idempotency
-key comes from the single-use card token instead.
+key comes from the single-use card token instead. A re-post of that form gets
+Square's original payment back, and is refused if CiviCRM has already recorded
+it.
+
+When Square does not confirm a payment's outcome, staff are told to check the
+Square Dashboard. The back-office contribution and membership forms keep their
+Pending contribution for the webhook to complete, as a contribution page does.
+Event registration, membership renewal and **Submit Credit Card Payment** have
+created no contribution yet, so for them it is a payment failure the form
+reports.
 
 ## Subscription installment webhooks
 

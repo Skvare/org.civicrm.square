@@ -66,6 +66,20 @@ abstract class CRM_Core_Payment_Square_SquareUnitTestCase extends TestCase {
       private SquareClient $mockClient;
 
       /**
+       * Square payment IDs CiviCRM has recorded, for isPaymentRecorded().
+       *
+       * @var string[]
+       */
+      public array $recordedPaymentIds = [];
+
+      /**
+       * What isPaymentRecorded() throws instead, if set.
+       *
+       * @var \Throwable|null
+       */
+      public ?\Throwable $recordedPaymentLookupFailure = NULL;
+
+      /**
        * @param array $paymentProcessor
        * @param \Square\SquareClient $mockClient
        */
@@ -79,6 +93,18 @@ abstract class CRM_Core_Payment_Square_SquareUnitTestCase extends TestCase {
        */
       protected function buildSquareClient(): SquareClient {
         return $this->mockClient;
+      }
+
+      /**
+       * @param string $trxnId
+       *
+       * @return bool
+       */
+      protected function isPaymentRecorded(string $trxnId): bool {
+        if ($this->recordedPaymentLookupFailure) {
+          throw $this->recordedPaymentLookupFailure;
+        }
+        return in_array($trxnId, $this->recordedPaymentIds, TRUE);
       }
 
     };

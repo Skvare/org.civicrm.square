@@ -7,7 +7,8 @@
    *  - Drupal Webform (webform_civicrm module) billing blocks
    *  - Back-office contribution, membership, event registration and payment
    *    forms, on a page or in a popup, where staff key in the payer's card
-   *    (flagged to Square as MOTO)
+   *    (flagged to Square as MOTO). submitForm() bypasses a popup's AJAX
+   *    submit, so submitting one reloads the whole page.
    *
    * Architecture mirrors Stripe (civicrmStripe.js) and AuthNet (civicrmAuthNetAccept.js):
    *  - CRM.squarePayment  — shared form-utility object (equivalent to CRM.payment in mjwshared)

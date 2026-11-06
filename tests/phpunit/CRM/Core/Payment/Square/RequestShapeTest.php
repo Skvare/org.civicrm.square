@@ -81,17 +81,61 @@ class CRM_Core_Payment_Square_RequestShapeTest extends CRM_Core_Payment_Square_S
   public function testBackOfficePaymentWithoutACheckoutReferenceIsKeyedOnItsCardToken(): void {
     [$processor, $captured] = $this->paymentRecordingProcessor();
     $processor->setBackOffice(TRUE);
+    $trxnIds = [];
     foreach (['cnon:first', 'cnon:first', 'cnon:second'] as $token) {
       $params = ['square_payment_token' => $token, 'amount' => '5.00', 'currency' => 'USD'];
-      $result = $processor->doPayment($params);
-      $this->assertSame('pay_' . count($captured), $result['trxn_id']);
+      $trxnIds[] = $processor->doPayment($params)['trxn_id'];
     }
 
     $this->assertCount(3, $captured);
     $this->assertSame($captured[0]->getIdempotencyKey(), $captured[1]->getIdempotencyKey(), 'A re-posted form carries the same token, so Square sees a retry.');
     $this->assertNotSame($captured[0]->getIdempotencyKey(), $captured[2]->getIdempotencyKey(), 'A new card token is a new payment.');
+    $this->assertSame(['pay_1', 'pay_1', 'pay_2'], $trxnIds, 'Nothing was recorded yet, so the retry reports the payment Square took.');
     $this->assertLessThanOrEqual(45, strlen($captured[2]->getIdempotencyKey()));
     $this->assertNull($captured[0]->getReferenceId());
+  }
+
+  public function testRePostedBackOfficePaymentAlreadyRecordedIsNotRecordedAgain(): void {
+    [$processor, $captured] = $this->paymentRecordingProcessor();
+    $processor->setBackOffice(TRUE);
+    $params = ['square_payment_token' => 'cnon:first', 'amount' => '5.00', 'currency' => 'USD'];
+    $first = $params;
+    $processor->doPayment($first);
+    $processor->recordedPaymentIds[] = 'pay_1';
+
+    try {
+      $processor->doPayment($params);
+      $this->fail('A payment CiviCRM has recorded must not be reported again.');
+    }
+    catch (PaymentProcessorException $e) {
+      $this->assertStringContainsString('already taken and recorded (Square payment pay_1)', $e->getMessage());
+    }
+    $this->assertCount(2, $captured);
+    $this->assertSame($captured[0]->getIdempotencyKey(), $captured[1]->getIdempotencyKey(), 'Square was only asked to retry.');
+  }
+
+  public function testBackOfficePaymentIsReportedWhenItsRecordCannotBeChecked(): void {
+    [$processor] = $this->paymentRecordingProcessor();
+    $processor->setBackOffice(TRUE);
+    $processor->recordedPaymentLookupFailure = new RuntimeException('database unavailable');
+    $params = ['square_payment_token' => 'cnon:first', 'amount' => '5.00', 'currency' => 'USD'];
+
+    // Square has taken it: reported as paid, not as failed.
+    $this->assertSame('pay_1', $processor->doPayment($params)['trxn_id']);
+  }
+
+  public function testPaymentWithACheckoutReferenceDoesNotCheckForARecordedPayment(): void {
+    [$processor] = $this->paymentRecordingProcessor();
+    $processor->setBackOffice(TRUE);
+    $processor->recordedPaymentIds[] = 'pay_1';
+    $params = [
+      'square_payment_token' => 'cnon:first',
+      'amount' => '5.00',
+      'currency' => 'USD',
+      'invoiceID' => 'inv-staff',
+    ];
+
+    $this->assertSame('pay_1', $processor->doPayment($params)['trxn_id']);
   }
 
   public function testOneTimePaymentInACurrencyWithoutCentsIsNotMultiplied(): void {
@@ -217,14 +261,20 @@ class CRM_Core_Payment_Square_RequestShapeTest extends CRM_Core_Payment_Square_S
    *
    * @return array
    *   The processor, and an \ArrayObject receiving each CreatePaymentRequest
-   *   sent. Square answers the Nth with COMPLETED payment pay_N.
+   *   sent. Square answers the Nth new idempotency key with COMPLETED
+   *   payment pay_N, and a key it has seen with that key's payment again.
    */
   private function paymentRecordingProcessor(): array {
     $captured = new ArrayObject();
+    $paymentIdsByKey = new ArrayObject();
     $paymentsMock = $this->createMock(PaymentsClient::class);
-    $paymentsMock->method('create')->willReturnCallback(function (CreatePaymentRequest $request) use ($captured) {
+    $paymentsMock->method('create')->willReturnCallback(function (CreatePaymentRequest $request) use ($captured, $paymentIdsByKey) {
       $captured[] = $request;
-      $payment = new Payment(['id' => 'pay_' . count($captured), 'status' => 'COMPLETED']);
+      $key = $request->getIdempotencyKey();
+      if (!isset($paymentIdsByKey[$key])) {
+        $paymentIdsByKey[$key] = 'pay_' . (count($paymentIdsByKey) + 1);
+      }
+      $payment = new Payment(['id' => $paymentIdsByKey[$key], 'status' => 'COMPLETED']);
       return new CreatePaymentResponse(['payment' => $payment]);
     });
     return [$this->processorWithMockClient(['payments' => $paymentsMock]), $captured];

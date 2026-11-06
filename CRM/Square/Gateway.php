@@ -217,7 +217,7 @@ class CRM_Square_Gateway {
     $messages = [];
 
     foreach ($errors as $err) {
-      $code = $err->getCode() ?? '';
+      $code = $err->getCode();
       switch ($code) {
         case 'CARD_DECLINED':
           $messages[] = E::ts('Your card was declined. Please use a different card.');
