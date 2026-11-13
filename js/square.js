@@ -364,6 +364,8 @@
       // Whether this script renamed the form's checkboxes for jQuery
       // validation (see setBillingFieldsRequiredForJQueryValidate()).
       billingFieldsAdjusted: false,
+      // The billing postal code in CiviCRM's billing block. For the webform
+      // one, see findBillingField().
       billingPostalCodePattern: /billing_postal_code(-\d+)?\]?$/,
 
       debugging: function(msg) {
@@ -391,12 +393,81 @@
        * location type); webforms wrap names in submitted[...].
        */
       fieldValue: function(pattern) {
-        var el = script.findField(pattern);
+        return script.elementValue(script.findField(pattern));
+      },
+
+      /**
+       * Value of a form field: for a select, its value and the selected option's text.
+       */
+      elementValue: function(el) {
         if (!el) return '';
         if (el.tagName === 'SELECT') {
           return el.selectedIndex > 0 || el.value ? { value: el.value, text: (el.options[el.selectedIndex] || {}).text || '' } : '';
         }
         return (el.value || '').trim();
+      },
+
+      /**
+       * A field of the billing address, if the form has one.
+       *
+       * CiviCRM's billing block names them e.g. billing_postal_code-5. Webform
+       * CiviCRM removes the billing block's address fields and has its own,
+       * e.g. civicrm_1_contribution_1_contribution_billing_address_postal_code.
+       * With its "same as" box ticked, the billing address is contact 1's
+       * (e.g. civicrm_1_contact_1_address_postal_code), which it copies into
+       * its billing fields only when the box is ticked, not as it is typed.
+       *
+       * @param {string} name
+       *   Webform CiviCRM's name for it: street_address,
+       *   supplemental_address_1, city, postal_code, state_province_id or
+       *   country_id.
+       * @param {RegExp} civicrmPattern
+       *   The billing block's name for it.
+       *
+       * @return {HTMLElement|null}
+       */
+      findBillingField: function(name, civicrmPattern) {
+        var patterns = [new RegExp('contribution_billing_address_' + name + '\\]?$'), civicrmPattern];
+        if (script.isBillingSameAsContact()) {
+          patterns.unshift(new RegExp('civicrm_1_contact_1_address_' + name + '\\]?$'));
+        }
+        for (var i = 0; i < patterns.length; i++) {
+          var el = script.findField(patterns[i]);
+          if (el) return el;
+        }
+        return null;
+      },
+
+      /**
+       * Value of a field of the billing address (see findBillingField()).
+       */
+      billingFieldValue: function(name, civicrmPattern) {
+        return script.elementValue(script.findBillingField(name, civicrmPattern));
+      },
+
+      /**
+       * Whether a webform's "billing address same as contact's" box is ticked.
+       */
+      isBillingSameAsContact: function() {
+        var el = script.findField(/contribution_billing_address_same_as\]?$/);
+        return !!el && (el.type === 'checkbox' || el.type === 'radio' || el.value === '1');
+      },
+
+      /**
+       * The billing address's postal code, as the donor entered it.
+       */
+      billingPostalCode: function() {
+        var value = script.billingFieldValue('postal_code', script.billingPostalCodePattern);
+        return typeof value === 'object' ? value.value : value;
+      },
+
+      /**
+       * Whether a change to the named field can change the billing postal code.
+       */
+      affectsBillingPostalCode: function(name) {
+        return script.billingPostalCodePattern.test(name)
+          || /(contribution_billing_address|civicrm_1_contact_1_address)_postal_code\]?$/.test(name)
+          || /contribution_billing_address_same_as\]?$/.test(name);
       },
 
       /**
@@ -453,12 +524,12 @@
         var givenName = script.fieldValue(/(^|\[|_)billing_first_name(\]|$)/) || script.fieldValue(/first_name\]?$/);
         var familyName = script.fieldValue(/(^|\[|_)billing_last_name(\]|$)/) || script.fieldValue(/last_name\]?$/);
         var email = script.fieldValue(/^email-(\d+|Primary)$/) || script.fieldValue(/email(-\d+)?\]?$/);
-        var street = script.fieldValue(/billing_street_address(-\d+)?\]?$/);
-        var street2 = script.fieldValue(/billing_supplemental_address_1(-\d+)?\]?$/);
-        var city = script.fieldValue(/billing_city(-\d+)?\]?$/);
-        var state = script.fieldValue(/billing_state_province(_id)?(-\d+)?\]?$/);
-        var postalCode = script.fieldValue(script.billingPostalCodePattern);
-        var country = script.fieldValue(/billing_country(_id)?(-\d+)?\]?$/);
+        var street = script.billingFieldValue('street_address', /billing_street_address(-\d+)?\]?$/);
+        var street2 = script.billingFieldValue('supplemental_address_1', /billing_supplemental_address_1(-\d+)?\]?$/);
+        var city = script.billingFieldValue('city', /billing_city(-\d+)?\]?$/);
+        var state = script.billingFieldValue('state_province_id', /billing_state_province(_id)?(-\d+)?\]?$/);
+        var postalCode = script.billingPostalCode();
+        var country = script.billingFieldValue('country_id', /billing_country(_id)?(-\d+)?\]?$/);
         if (givenName) contact.givenName = givenName;
         if (familyName) contact.familyName = familyName;
         if (email) contact.email = email;
@@ -467,7 +538,10 @@
         if (state && text(state)) contact.state = text(state);
         if (postalCode) contact.postalCode = postalCode;
         if (country) {
-          var countryCode = typeof country === 'object' ? cfg.countryIsoCodes[country.value] : country;
+          // A country ID (from a select, or a webform's hidden default), or
+          // already an ISO code.
+          var countryValue = typeof country === 'object' ? country.value : country;
+          var countryCode = cfg.countryIsoCodes[countryValue] || countryValue;
           if (countryCode && /^[A-Za-z]{2}$/.test(countryCode)) contact.countryCode = countryCode.toUpperCase();
         }
         var details = {
@@ -489,7 +563,7 @@
        * A logged-in donor's billing address is often filled in already.
        */
       getCardOptions: function() {
-        var postalCode = script.toCardPostalCode(script.fieldValue(script.billingPostalCodePattern));
+        var postalCode = script.toCardPostalCode(script.billingPostalCode());
         return postalCode ? { postalCode: postalCode } : null;
       },
 
@@ -536,7 +610,10 @@
        */
       onCardPostalCodeChanged: function(postalCode) {
         script.cardPostalCode = (postalCode || '').trim();
-        var field = script.findField(script.billingPostalCodePattern);
+        // With a webform's "same as" box ticked, the billing address is the
+        // contact's address, which is left to the donor.
+        if (script.isBillingSameAsContact()) return;
+        var field = script.findBillingField('postal_code', script.billingPostalCodePattern);
         if (!field || field.disabled || field.readOnly) return;
         var current = (field.value || '').trim();
         if (current === '' || current === script.autofilledPostalCode) {
@@ -574,7 +651,7 @@
        *   Empty if they match, or either is blank.
        */
       getPostalCodeMismatchError: function(cardPostalCode) {
-        var billingPostalCode = script.fieldValue(script.billingPostalCodePattern);
+        var billingPostalCode = script.billingPostalCode();
         if (!cardPostalCode || !billingPostalCode || script.postalCodesMatch(cardPostalCode, billingPostalCode)) {
           return '';
         }
@@ -730,12 +807,31 @@
 
         // The card form's postal code follows the billing address's. Bound to
         // the form, so it also covers billing fields shown or reloaded later.
-        $(CRM.squarePayment.form).off('change.squarePostalCode').on('change.squarePostalCode', function(changeEvent) {
+        // The billing postal code is read again, rather than taken from the
+        // changed field: on a webform it can come from either of two fields
+        // (see findBillingField()).
+        var followBillingPostalCode = function(changeEvent) {
           var target = changeEvent.target;
-          if (target && target.name && script.billingPostalCodePattern.test(target.name)) {
-            script.onBillingPostalCodeChanged(target.value);
+          if (target && target.name && script.affectsBillingPostalCode(target.name)) {
+            script.onBillingPostalCodeChanged(script.billingPostalCode());
           }
-        });
+        };
+        $(CRM.squarePayment.form).off('change.squarePostalCode').on('change.squarePostalCode', followBillingPostalCode);
+        // Webform CiviCRM fills in its billing fields (e.g. when its "same as"
+        // box is ticked) with Drupal's jQuery, whose .change() reaches only
+        // handlers bound with that jQuery, not CiviCRM's. A change the donor
+        // makes reaches both, so only the triggered ones (with no browser
+        // event) are taken from Drupal's.
+        if (window.jQuery && window.jQuery !== $) {
+          window.jQuery(CRM.squarePayment.form).off('change.squarePostalCode').on('change.squarePostalCode', function(changeEvent) {
+            if (!changeEvent.originalEvent) {
+              followBillingPostalCode(changeEvent);
+            }
+          });
+        }
+        // The billing postal code may have been filled in while the card
+        // form was loading.
+        script.onBillingPostalCodeChanged(script.billingPostalCode());
 
         // Webform-specific wiring. Namespaced, and unbound first, because the
         // billing block (and so this) is reloaded whenever the processor or
