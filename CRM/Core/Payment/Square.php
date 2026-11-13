@@ -104,21 +104,23 @@ class CRM_Core_Payment_Square extends CRM_Core_Payment {
    * @param \CRM_Core_Form $form
    */
   public function buildForm(&$form) {
-    $isSandbox = FALSE;
-    if ($this->_paymentProcessor['is_test']) {
-      $isSandbox = TRUE;
-    }
+    // The card is tokenized with this processor's credentials, which must
+    // be those of the processor that will charge it.
+    $tokenizingProcessor = $this->getTokenizingProcessor($form);
+    $isSandbox = !empty($tokenizingProcessor['is_test']);
 
     $sdkUrl = $isSandbox
       ? 'https://sandbox.web.squarecdn.com/v1/square.js'
       : 'https://web.squarecdn.com/v1/square.js';
 
     $jsVars = [
+      // The processor the form selected, even when tokenizing with its test
+      // counterpart: js/square.js matches it against the form's selection.
       'id' => (int) ($this->_paymentProcessor['id'] ?? 0),
-      'applicationId' => $this->_paymentProcessor['user_name'] ?? '',
+      'applicationId' => $tokenizingProcessor['user_name'] ?? '',
       // Never fall back to any other credential: everything here is
       // published to the browser.
-      'locationId' => trim((string) ($this->_paymentProcessor['signature'] ?? '')),
+      'locationId' => trim((string) ($tokenizingProcessor['signature'] ?? '')),
       'isSandbox' => (bool) $isSandbox,
       // For the buyer verification details js/square.js passes to Square
       // when tokenizing the card.
@@ -169,6 +171,46 @@ class CRM_Core_Payment_Square extends CRM_Core_Payment {
     // building must continue as normal (CRM_Core_Payment::buildForm()'s
     // contract: FALSE = "continue normal form building").
     return FALSE;
+  }
+
+  /**
+   * The processor whose credentials the browser tokenizes the card with.
+   *
+   * Normally this processor. But a Webform CiviCRM form in test mode (its
+   * "Test" tab) loads the billing block for the live processor the form
+   * selects, flagged action=preview, then charges the card with that
+   * processor's test counterpart (see webform_civicrm's
+   * WebformCivicrmPostProcess::contributionParams()). CiviCRM's billing
+   * block form (CRM_Financial_Form_Payment) ignores the flag, so the card
+   * would be tokenized with the production application and charged with
+   * the sandbox access token, which Square rejects with "NOT_FOUND: Card
+   * nonce not found". Tokenize with the test processor instead.
+   *
+   * @param \CRM_Core_Form $form
+   *
+   * @return array
+   *   A civicrm_payment_processor row.
+   */
+  protected function getTokenizingProcessor($form): array {
+    if (!empty($this->_paymentProcessor['is_test'])
+      || !($form instanceof CRM_Financial_Form_Payment)
+      // CRM_Utils_Request resolves 'action' to its CRM_Core_Action mask.
+      || !((int) CRM_Utils_Request::retrieveValue('action', 'String') & CRM_Core_Action::PREVIEW)) {
+      return $this->_paymentProcessor;
+    }
+    try {
+      $testProcessorId = (int) CRM_Financial_BAO_PaymentProcessor::getTestProcessorId($this->_paymentProcessor['id']);
+      $testProcessor = CRM_Financial_BAO_PaymentProcessor::getPayment($testProcessorId);
+    }
+    catch (\Throwable $e) {
+      $testProcessor = NULL;
+    }
+    if (empty($testProcessor['is_test'])) {
+      // The charge will fail too, but say why.
+      \Civi::log('square')->warning("Square: payment processor {$this->processorId()} has no test processor to take a test payment with.");
+      return $this->_paymentProcessor;
+    }
+    return $testProcessor;
   }
 
   /**
