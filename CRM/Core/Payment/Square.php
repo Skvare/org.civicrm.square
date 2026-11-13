@@ -147,7 +147,7 @@ class CRM_Core_Payment_Square extends CRM_Core_Payment {
 
     // Our integration JS (loaded last so CRM.squarePayment utilities are ready).
     CRM_Core_Region::instance('billing-block')->add([
-      'scriptUrl' => E::url('js/square.js'),
+      'scriptUrl' => $this->getScriptUrl(),
       'weight' => 100,
     ]);
 
@@ -171,6 +171,22 @@ class CRM_Core_Payment_Square extends CRM_Core_Payment {
     // building must continue as normal (CRM_Core_Payment::buildForm()'s
     // contract: FALSE = "continue normal form building").
     return FALSE;
+  }
+
+  /**
+   * URL of js/square.js, versioned by when the file last changed.
+   *
+   * Web servers may let browsers cache scripts for weeks (a month on
+   * dev.uschess.org), and the URL is otherwise the same in every release, so
+   * browsers would keep running the previous release's script.
+   *
+   * @return string
+   */
+  protected function getScriptUrl(): string {
+    $url = E::url('js/square.js');
+    $path = E::path('js/square.js');
+    $modified = is_file($path) ? filemtime($path) : FALSE;
+    return $modified ? "{$url}?r={$modified}" : $url;
   }
 
   /**
@@ -443,7 +459,7 @@ class CRM_Core_Payment_Square extends CRM_Core_Payment {
    *
    * @see CRM_Square_Customers::createCardOnFile()
    */
-  public function createCardOnFile($customerId, $cardNonce, array $params = [], $contactId = NULL) {
+  public function createCardOnFile($customerId, #[\SensitiveParameter] $cardNonce, array $params = [], $contactId = NULL) {
     return $this->customers()->createCardOnFile($customerId, $cardNonce, $params, $contactId);
   }
 

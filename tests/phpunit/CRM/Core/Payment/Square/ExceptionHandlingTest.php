@@ -112,6 +112,39 @@ class CRM_Core_Payment_Square_ExceptionHandlingTest extends CRM_Core_Payment_Squ
   }
 
   /**
+   * A failed card save is logged with its stack trace: not the card nonce.
+   *
+   * CiviCRM logs a payment failure's stack trace with its arguments.
+   */
+  public function testCardNonceIsLeftOutOfStackTraces(): void {
+    if (ini_get('zend.exception_ignore_args')) {
+      $this->markTestSkipped('Stack traces have no arguments with zend.exception_ignore_args on.');
+    }
+    $cards = $this->createMock(CardsClient::class);
+    $cards->method('create')->willThrowException($this->apiException(400, [
+      [
+        'category' => 'PAYMENT_METHOD_ERROR',
+        'code' => 'CARD_DECLINED',
+        'detail' => "Authorization error: 'CARD_DECLINED'",
+      ],
+    ]));
+    $processor = $this->processorWithMockClient(['cards' => $cards]);
+
+    try {
+      $processor->createCardOnFile('customer-1', 'cnon:secret-nonce');
+      $this->fail('A declined card must throw.');
+    }
+    catch (PaymentProcessorException $e) {
+      $frames = array_filter($e->getTrace(), fn (array $frame): bool => ($frame['function'] ?? '') === 'createCardOnFile');
+      $this->assertNotEmpty($frames);
+      foreach ($frames as $frame) {
+        $this->assertInstanceOf(\SensitiveParameterValue::class, $frame['args'][1]);
+      }
+      $this->assertStringNotContainsString('cnon:secret-nonce', $e->getTraceAsString());
+    }
+  }
+
+  /**
    * @dataProvider nonDeclineErrorProvider
    */
   public function testOtherApiFailuresDoNotTriggerPaymentFailureCleanup(int $status, string $category, string $expectedClass): void {

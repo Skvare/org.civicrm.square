@@ -258,7 +258,8 @@ class CRM_Square_Customers {
    * @param string $customerId
    *   Square customer ID.
    * @param string $cardNonce
-   *   Token from Web Payments SDK.
+   *   Token from Web Payments SDK. Left out of stack traces, which CiviCRM
+   *   logs with their arguments when a payment fails.
    * @param array $params
    *   Payment params: billing address fields, names, email, and
    *   contributionRecurID.
@@ -270,7 +271,7 @@ class CRM_Square_Customers {
    *
    * @throws \CRM_Core_Exception
    */
-  public function createCardOnFile($customerId, $cardNonce, array $params = [], $contactId = NULL) {
+  public function createCardOnFile($customerId, #[\SensitiveParameter] $cardNonce, array $params = [], $contactId = NULL) {
     if (empty($cardNonce)) {
       throw new CRM_Core_Exception('Missing Square card token for recurring payment.');
     }

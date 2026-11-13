@@ -172,6 +172,39 @@ class CRM_Core_Payment_SquareTest extends TestCase {
     $this->assertSame('', json_decode($form->assigned['squareJSVarsJson'], TRUE)['locationId']);
   }
 
+  /**
+   * Each release's script has its own URL, so browsers do not run a cached one.
+   */
+  public function testBuildFormVersionsItsScript(): void {
+    if (!property_exists(CRM_Core_Region::class, 'added')) {
+      $this->markTestSkipped('Needs the CRM_Core_Region stand-in.');
+    }
+    CRM_Core_Region::$added = [];
+    $form = new class() {
+
+      /**
+       * @var array
+       */
+      public array $assigned = [];
+
+      public function elementExists($name) {
+        return TRUE;
+      }
+
+      public function assign($name, $value) {
+        $this->assigned[$name] = $value;
+      }
+
+    };
+
+    $this->processor()->buildForm($form);
+
+    $urls = array_column(CRM_Core_Region::$added['billing-block'] ?? [], 'scriptUrl');
+    $ours = array_values(array_filter($urls, fn (string $url): bool => str_contains($url, 'js/square.js') && !str_contains($url, 'squarecdn.com')));
+    $this->assertCount(1, $ours);
+    $this->assertStringEndsWith('js/square.js?r=' . filemtime(CRM_Square_ExtensionUtil::path('js/square.js')), $ours[0]);
+  }
+
   public function testStaffCanTakeCardPaymentsOnBackOfficeForms(): void {
     $this->assertTrue($this->processor()->supportsBackOffice());
   }
