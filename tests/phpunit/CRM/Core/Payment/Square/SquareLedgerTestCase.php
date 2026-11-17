@@ -76,6 +76,13 @@ class CRM_Core_Payment_Square_FakeLedgerProcessor extends CRM_Core_Payment_Squar
   public array $customerContacts = [];
 
   /**
+   * Payment tokens (civicrm_payment_token rows) by ID, for every processor.
+   *
+   * @var array
+   */
+  public array $paymentTokens = [];
+
+  /**
    * Square card ID getRecurCardId() returns.
    *
    * @var string|null
@@ -532,6 +539,41 @@ class CRM_Core_Payment_Square_FakeLedgerReconciler extends CRM_Square_Reconciler
     if (round($paid, 2) <= 0) {
       $this->ledger->contributions[$contributionId]['status'] = 'Refunded';
     }
+  }
+
+  /**
+   * @param string $cardId
+   *
+   * @return array
+   */
+  protected function findPaymentTokensByCardId(string $cardId): array {
+    $rows = array_filter($this->ledger->paymentTokens, fn (array $token) => $token['token'] === $cardId && $token['payment_processor_id'] === $this->gateway->processorId());
+    ksort($rows);
+    $fields = array_flip(['id', 'contact_id', 'expiry_date', 'masked_account_number']);
+    return array_values(array_map(fn (array $token) => array_intersect_key($token, $fields), $rows));
+  }
+
+  /**
+   * @param int $tokenId
+   * @param array $values
+   */
+  protected function updatePaymentToken(int $tokenId, array $values): void {
+    $this->ledger->paymentTokens[$tokenId] = $values + $this->ledger->paymentTokens[$tokenId];
+  }
+
+  /**
+   * @param int[] $tokenIds
+   *
+   * @return array
+   */
+  protected function findActiveRecursByPaymentTokens(array $tokenIds): array {
+    $active = array_map([CRM_Square_Status::class, 'recurStatusId'], self::ACTIVE_RECUR_STATUSES);
+    $rows = array_filter($this->ledger->recurs, fn (array $recur) => in_array($recur['payment_token_id'] ?? NULL, $tokenIds, TRUE)
+      && $recur['payment_processor_id'] === $this->gateway->processorId()
+      && (bool) $recur['is_test'] === $this->gateway->isTestMode()
+      && in_array((int) $recur['contribution_status_id'], $active, TRUE));
+    ksort($rows);
+    return array_values(array_map(fn (array $recur) => ['id' => $recur['id'], 'contact_id' => $recur['contact_id']], $rows));
   }
 
   /**

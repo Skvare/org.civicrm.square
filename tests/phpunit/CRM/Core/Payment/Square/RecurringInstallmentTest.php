@@ -444,6 +444,63 @@ class CRM_Core_Payment_Square_RecurringInstallmentTest extends CRM_Core_Payment_
   }
 
   /**
+   * A failed installment counts a failure and leaves the series In Progress.
+   */
+  public function testFailedInstallmentCountsAFailureAndKeepsTheSeriesInProgress(): void {
+    $this->payFirstInstallment();
+    $inProgress = CRM_Square_Status::recurStatusId('In Progress');
+    $this->assertSame($inProgress, $this->processor->recurs[self::RECUR_ID]['contribution_status_id']);
+
+    $this->deliver($this->invoiceScheduledChargeFailedEvent(self::SECOND));
+
+    $this->assertSame(1, $this->processor->recurs[self::RECUR_ID]['failure_count']);
+    $this->assertSame($inProgress, $this->processor->recurs[self::RECUR_ID]['contribution_status_id']);
+  }
+
+  /**
+   * Each failed attempt counts until a charge succeeds, which resets the count.
+   */
+  public function testCollectingAFailedInstallmentResetsTheFailureCount(): void {
+    $this->payFirstInstallment();
+
+    $this->deliver($this->invoiceScheduledChargeFailedEvent(self::SECOND));
+    // Square tries the same invoice again, and fails again.
+    $this->deliver($this->invoiceScheduledChargeFailedEvent(self::SECOND));
+    $this->assertSame(2, $this->processor->recurs[self::RECUR_ID]['failure_count']);
+    $this->assertCount(2, $this->seriesContributions(), 'One Failed contribution for the invoice, however often it fails.');
+
+    $this->squareBills(self::SECOND);
+    $this->deliver($this->invoicePaymentMadeEvent(self::SECOND));
+
+    $this->assertSame(0, $this->processor->recurs[self::RECUR_ID]['failure_count']);
+    $this->assertSame(['Completed', 'Completed'], array_column($this->seriesContributions(), 'status'));
+  }
+
+  /**
+   * A failed first charge counts too; collecting it resets the count.
+   */
+  public function testFailedFirstChargeCountsAFailure(): void {
+    $this->deliver($this->invoiceScheduledChargeFailedEvent(self::FIRST));
+    $this->assertSame(1, $this->processor->recurs[self::RECUR_ID]['failure_count']);
+
+    $this->payFirstInstallment();
+    $this->assertSame(0, $this->processor->recurs[self::RECUR_ID]['failure_count']);
+  }
+
+  /**
+   * A stale failure, of an invoice Square has since collected, counts nothing.
+   */
+  public function testStaleFailureCountsNothing(): void {
+    $this->payFirstInstallment();
+    $this->squareBills(self::SECOND);
+    $this->deliver($this->invoicePaymentMadeEvent(self::SECOND));
+
+    $this->deliver($this->invoiceScheduledChargeFailedEvent(self::SECOND));
+
+    $this->assertArrayNotHasKey('failure_count', $this->processor->recurs[self::RECUR_ID]);
+  }
+
+  /**
    * A failure of the first invoice delivered after it was paid creates nothing.
    *
    * Square does not deliver webhooks in order, and retries a failed charge.

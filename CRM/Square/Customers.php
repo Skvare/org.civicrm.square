@@ -318,10 +318,7 @@ class CRM_Square_Customers {
     // field) so multiple cards per contact are properly distinguished, and
     // link it to the recurring contribution it was created for, if any.
     if (!empty($contactId)) {
-      $expiryDate = NULL;
-      if ($card->getExpYear() && $card->getExpMonth()) {
-        $expiryDate = date('Y-m-t', mktime(0, 0, 0, (int) $card->getExpMonth(), 1, (int) $card->getExpYear()));
-      }
+      $expiryDate = self::cardExpiryDate($card->getExpMonth(), $card->getExpYear());
 
       $tokenCreate = PaymentToken::create(FALSE)
         ->addValue('contact_id', (int) $contactId)
@@ -352,6 +349,22 @@ class CRM_Square_Customers {
     }
 
     return $cardId;
+  }
+
+  /**
+   * A card's expiry as a payment token stores it: the last day of its month.
+   *
+   * @param int|string|null $month
+   * @param int|string|null $year
+   *
+   * @return string|null
+   *   Y-m-d, or NULL if either is missing.
+   */
+  public static function cardExpiryDate($month, $year): ?string {
+    if (!(int) $month || !(int) $year) {
+      return NULL;
+    }
+    return date('Y-m-t', mktime(0, 0, 0, (int) $month, 1, (int) $year));
   }
 
   /**

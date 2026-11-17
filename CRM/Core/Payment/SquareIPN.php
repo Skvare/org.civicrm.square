@@ -13,6 +13,7 @@ use Civi\Api4\PaymentprocessorWebhook;
  *   subscription.created, subscription.updated
  *   invoice.created, invoice.payment_made, invoice.scheduled_charge_failed
  *   payment.updated, refund.created, refund.updated
+ *   card.disabled, card.forgotten, card.automatically_updated, card.updated
  *
  * Square has no subscription.canceled event: a cancellation arrives as a
  * subscription.updated with a canceled_date, while its status is still
@@ -121,6 +122,10 @@ class CRM_Core_Payment_SquareIPN {
       'payment.updated',
       'refund.created',
       'refund.updated',
+      'card.disabled',
+      'card.forgotten',
+      'card.automatically_updated',
+      'card.updated',
     ];
   }
 
@@ -383,6 +388,7 @@ class CRM_Core_Payment_SquareIPN {
     $this->customer_id = $obj['subscription']['customer_id']
       ?? $obj['invoice']['primary_recipient']['customer_id']
       ?? $obj['payment']['customer_id']
+      ?? $obj['card']['customer_id']
       ?? NULL;
 
     $this->payment_id = $obj['payment']['id']
@@ -463,6 +469,22 @@ class CRM_Core_Payment_SquareIPN {
         if (!empty($refund)) {
           $this->_paymentProcessor->syncRefundFromSquare($refund);
           CRM_Core_Payment_SquareDebugLogger::log("Square IPN: {$eventType} synced for payment {$this->payment_id}");
+        }
+        break;
+
+      case 'card.disabled':
+      case 'card.forgotten':
+        $card = $obj['card'] ?? [];
+        if (!empty($card)) {
+          $this->_paymentProcessor->syncCardDisabledFromSquare($card, $eventType);
+        }
+        break;
+
+      case 'card.automatically_updated':
+      case 'card.updated':
+        $card = $obj['card'] ?? [];
+        if (!empty($card)) {
+          $this->_paymentProcessor->syncCardFromSquare($card);
         }
         break;
 

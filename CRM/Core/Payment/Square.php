@@ -432,6 +432,31 @@ class CRM_Core_Payment_Square extends CRM_Core_Payment {
   }
 
   /**
+   * Sync a Square card.disabled or card.forgotten webhook event.
+   *
+   * @param array $card
+   *   Card object from the webhook payload.
+   * @param string $eventType
+   *
+   * @see CRM_Square_Reconciler::syncCardDisabledFromSquare()
+   */
+  public function syncCardDisabledFromSquare(array $card, string $eventType): void {
+    $this->reconciler()->syncCardDisabledFromSquare($card, $eventType);
+  }
+
+  /**
+   * Sync a Square card.automatically_updated or card.updated webhook event.
+   *
+   * @param array $card
+   *   Card object from the webhook payload.
+   *
+   * @see CRM_Square_Reconciler::syncCardFromSquare()
+   */
+  public function syncCardFromSquare(array $card): void {
+    $this->reconciler()->syncCardFromSquare($card);
+  }
+
+  /**
    * Ensure a Square customer exists for this contact, saving any submitted card.
    *
    * @param array $params

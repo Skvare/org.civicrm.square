@@ -5,6 +5,7 @@ use Civi\Api4\Contribution;
 use Civi\Api4\ContributionRecur;
 use Civi\Api4\FinancialTrxn;
 use Civi\Api4\Payment;
+use Civi\Api4\PaymentToken;
 use Square\SquareClient;
 use Square\Types\InvoiceFilter;
 use Square\Types\InvoiceQuery;
@@ -69,6 +70,17 @@ class CRM_Square_Reconciler {
     'PAYMENT_PENDING',
     'REFUNDED',
     'PARTIALLY_REFUNDED',
+  ];
+
+  /**
+   * Recurring contribution statuses of a series Square may still charge.
+   */
+  protected const ACTIVE_RECUR_STATUSES = [
+    'Pending',
+    'In Progress',
+    'Overdue',
+    'Processing',
+    'Failing',
   ];
 
   /**
@@ -616,6 +628,9 @@ class CRM_Square_Reconciler {
       'fee_amount' => $installment['fee_amount'],
     ], $sendReceipt);
     CRM_Core_Payment_SquareDebugLogger::log("Square recordSubscriptionInstallment(): recorded payment {$paymentId} on contribution {$contribution['id']} of recurring contribution {$recurId}.");
+
+    // failure_count is the failed charges since the last successful one.
+    $this->resetFailureCount($recurId);
   }
 
   /**
@@ -822,7 +837,7 @@ class CRM_Square_Reconciler {
    */
   protected function findRecurBySubscriptionId(string $subscriptionId): ?array {
     return ContributionRecur::get(FALSE)
-      ->addSelect('id', 'contact_id', 'amount', 'currency', 'processor_id', 'contribution_status_id', 'is_email_receipt', 'is_test')
+      ->addSelect('id', 'contact_id', 'amount', 'currency', 'processor_id', 'contribution_status_id', 'is_email_receipt', 'is_test', 'failure_count')
       ->addWhere('processor_id', '=', $subscriptionId)
       ->addWhere('payment_processor_id', '=', $this->gateway->processorId())
       ->addWhere('is_test', '=', $this->gateway->isTestMode())
@@ -892,7 +907,7 @@ class CRM_Square_Reconciler {
    */
   protected function findRecurById(int $recurId): ?array {
     return ContributionRecur::get(FALSE)
-      ->addSelect('id', 'contact_id', 'amount', 'currency', 'processor_id', 'contribution_status_id', 'is_email_receipt', 'is_test')
+      ->addSelect('id', 'contact_id', 'amount', 'currency', 'processor_id', 'contribution_status_id', 'is_email_receipt', 'is_test', 'failure_count')
       ->addWhere('id', '=', $recurId)
       ->addWhere('payment_processor_id', '=', $this->gateway->processorId())
       ->addWhere('is_test', '=', $this->gateway->isTestMode())
@@ -1236,6 +1251,62 @@ class CRM_Square_Reconciler {
       ->addWhere('id', '=', $recurId)
       ->setValues($values)
       ->execute();
+  }
+
+  /**
+   * This processor's payment tokens for a Square card on file.
+   *
+   * @param string $cardId
+   *   Square card ID (ccof:...), the payment token's token.
+   *
+   * @return array
+   *   Rows of id, contact_id, expiry_date, masked_account_number.
+   */
+  protected function findPaymentTokensByCardId(string $cardId): array {
+    return PaymentToken::get(FALSE)
+      ->addSelect('id', 'contact_id', 'expiry_date', 'masked_account_number')
+      ->addWhere('token', '=', $cardId)
+      ->addWhere('payment_processor_id', '=', $this->gateway->processorId())
+      ->execute()
+      ->getArrayCopy();
+  }
+
+  /**
+   * Update fields on a payment token.
+   *
+   * @param int $tokenId
+   * @param array $values
+   *
+   * @throws \CRM_Core_Exception
+   */
+  protected function updatePaymentToken(int $tokenId, array $values): void {
+    PaymentToken::update(FALSE)
+      ->addWhere('id', '=', $tokenId)
+      ->setValues($values)
+      ->execute();
+  }
+
+  /**
+   * This processor's recurring contributions, in its environment, that still charge one of these payment tokens.
+   *
+   * @param int[] $tokenIds
+   *
+   * @return array
+   *   Rows of id, contact_id.
+   */
+  protected function findActiveRecursByPaymentTokens(array $tokenIds): array {
+    if (!$tokenIds) {
+      return [];
+    }
+    return ContributionRecur::get(FALSE)
+      ->addSelect('id', 'contact_id')
+      ->addWhere('payment_token_id', 'IN', $tokenIds)
+      ->addWhere('payment_processor_id', '=', $this->gateway->processorId())
+      ->addWhere('is_test', '=', $this->gateway->isTestMode())
+      ->addWhere('contribution_status_id:name', 'IN', self::ACTIVE_RECUR_STATUSES)
+      ->addOrderBy('id', 'ASC')
+      ->execute()
+      ->getArrayCopy();
   }
 
   /**
@@ -1648,6 +1719,10 @@ class CRM_Square_Reconciler {
             $this->updateContribution($contribution['id'], ['contribution_status_id' => CRM_Square_Status::contributionStatusId('Failed')]);
             CRM_Core_Payment_SquareDebugLogger::log("Square: Marked contribution {$contribution['id']} as Failed for invoice {$invoiceId}.");
           }
+          // Failed already: Square tried the invoice again, and failed again.
+          if (in_array($contribution['status'], ['Pending', 'Failed'], TRUE)) {
+            $this->countFailedInstallment((int) $recur['id']);
+          }
           return;
         }
       }
@@ -1659,6 +1734,7 @@ class CRM_Square_Reconciler {
         // contribution stays Pending — and is completed if Square collects
         // it later — rather than gaining a separate Failed duplicate.
         Civi::log('square')->warning("Square: the first payment of recurring contribution {$recur['id']} (Square invoice {$invoiceId}) failed; contribution {$signup['id']} remains Pending.");
+        $this->countFailedInstallment((int) $recur['id']);
         return;
       }
 
@@ -1668,10 +1744,133 @@ class CRM_Square_Reconciler {
         'receive_date' => $this->squareTimestampToCivi($invoice['updated_at'] ?? NULL),
       ]);
       CRM_Core_Payment_SquareDebugLogger::log("Square: Created Failed contribution {$failed['id']} for invoice {$invoiceId}.");
+      $this->countFailedInstallment((int) $recur['id']);
     }
     finally {
       $lock->release();
     }
+  }
+
+  /**
+   * Add a failed charge to a recurring contribution's failure_count.
+   *
+   * Its status is left alone: Square keeps the subscription ACTIVE and goes
+   * on to charge the next installment, and only a subscription Square
+   * DEACTIVATED (see syncSubscriptionFromSquare()) ends the series. Called
+   * under the series' lock.
+   *
+   * @param int $recurId
+   *
+   * @throws \CRM_Core_Exception
+   */
+  protected function countFailedInstallment(int $recurId): void {
+    $recur = $this->findRecurById($recurId);
+    if (!$recur) {
+      return;
+    }
+    $count = (int) ($recur['failure_count'] ?? 0) + 1;
+    $this->updateRecur($recurId, ['failure_count' => $count]);
+    CRM_Core_Payment_SquareDebugLogger::log("Square: recurring contribution {$recurId} has {$count} failed charge(s) since its last successful one.");
+  }
+
+  /**
+   * Clear a recurring contribution's failure_count after a successful charge.
+   *
+   * @param int $recurId
+   *
+   * @throws \CRM_Core_Exception
+   */
+  protected function resetFailureCount(int $recurId): void {
+    $recur = $this->findRecurById($recurId);
+    if ($recur && (int) ($recur['failure_count'] ?? 0) > 0) {
+      $this->updateRecur($recurId, ['failure_count' => 0]);
+    }
+  }
+
+  /**
+   * Sync a Square card.disabled or card.forgotten webhook event.
+   *
+   * Square can no longer charge the card: it was disabled (in the Square
+   * Dashboard, through the API, or by Square), or forgotten — deleted at
+   * the customer's request. A subscription still charging it fails its next
+   * installment (see syncInvoicePaymentFailedFromSquare()) until the donor
+   * gives a new card through CiviCRM's update billing details form (see
+   * CRM_Core_Payment_Square::updateSubscriptionBillingInfo()). A payment
+   * token has no field to record that the card is unusable, so the
+   * recurring contributions still charging it are named in a warning, for
+   * staff to contact the donor.
+   *
+   * @param array $card
+   *   Card object from the webhook payload.
+   * @param string $eventType
+   *   The event: card.disabled or card.forgotten.
+   */
+  public function syncCardDisabledFromSquare(array $card, string $eventType): void {
+    $cardId = (string) ($card['id'] ?? '');
+    $tokens = $cardId === '' ? [] : $this->findPaymentTokensByCardId($cardId);
+    if (!$tokens) {
+      CRM_Core_Payment_SquareDebugLogger::log("Square: {$eventType} for card " . self::maskCardId($cardId) . ', which is not a payment token of this processor; nothing to do.');
+      return;
+    }
+
+    $cardLabel = 'card ' . self::maskCardId($cardId) . ' of contact ' . implode(', ', array_unique(array_map('intval', array_column($tokens, 'contact_id'))));
+    $how = $eventType === 'card.forgotten' ? "forgotten (deleted at the customer's request)" : 'disabled';
+    $recurs = $this->findActiveRecursByPaymentTokens(array_map('intval', array_column($tokens, 'id')));
+    if (!$recurs) {
+      CRM_Core_Payment_SquareDebugLogger::log("Square: {$cardLabel} was {$how}; no active recurring contribution charges it.");
+      return;
+    }
+    Civi::log('square')->warning("Square: {$cardLabel} was {$how}. Recurring contribution(s) " . implode(', ', array_column($recurs, 'id')) . ' still charge it: their next installment will fail until the donor updates the card.');
+  }
+
+  /**
+   * Sync a Square card.automatically_updated or card.updated webhook event.
+   *
+   * Square's card updater replaces the details of a renewed or reissued
+   * card (card.automatically_updated); card.updated reports other changes.
+   * The card ID, which the payment token holds, stays the same, so
+   * subscriptions go on charging the card: only the expiry date and last 4
+   * digits CiviCRM shows for it are brought up to date.
+   *
+   * @param array $card
+   *   Card object from the webhook payload.
+   *
+   * @throws \CRM_Core_Exception
+   */
+  public function syncCardFromSquare(array $card): void {
+    $cardId = (string) ($card['id'] ?? '');
+    $tokens = $cardId === '' ? [] : $this->findPaymentTokensByCardId($cardId);
+    if (!$tokens) {
+      CRM_Core_Payment_SquareDebugLogger::log('Square: card update for card ' . self::maskCardId($cardId) . ', which is not a payment token of this processor; nothing to do.');
+      return;
+    }
+
+    $expiryDate = CRM_Square_Customers::cardExpiryDate($card['exp_month'] ?? NULL, $card['exp_year'] ?? NULL);
+    $last4 = (string) ($card['last_4'] ?? '');
+    foreach ($tokens as $token) {
+      $changes = [];
+      if ($expiryDate !== NULL && substr((string) ($token['expiry_date'] ?? ''), 0, 10) !== $expiryDate) {
+        $changes['expiry_date'] = $expiryDate;
+      }
+      if ($last4 !== '' && (string) ($token['masked_account_number'] ?? '') !== $last4) {
+        $changes['masked_account_number'] = $last4;
+      }
+      if ($changes) {
+        $this->updatePaymentToken((int) $token['id'], $changes);
+        CRM_Core_Payment_SquareDebugLogger::log("Square: updated payment token {$token['id']} (card " . self::maskCardId($cardId) . '): ' . implode(', ', array_keys($changes)) . '.');
+      }
+    }
+  }
+
+  /**
+   * A Square card ID shortened for logs: a card ID is a reusable payment token.
+   *
+   * @param string $cardId
+   *
+   * @return string
+   */
+  protected static function maskCardId(string $cardId): string {
+    return $cardId === '' ? '(none)' : '…' . substr($cardId, -4);
   }
 
   /**
