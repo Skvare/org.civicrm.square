@@ -1101,4 +1101,29 @@
       load();
     }
 
-  }(CRM.$, CRM.ts('org.civicrm.square')));
+  }(CRM.$, (function(domain) {
+    /**
+     * This extension's ts().
+     *
+     * CRM.ts() looks the global ts() up again on every call, and a third-party
+     * script can replace that global after the page loads: UXSniff's
+     * uxsnf-control.js declares a top-level `var ts` (a timestamp), after which
+     * every message here threw "ts is not a function". So this keeps CiviCRM's
+     * ts() as it is when this file loads, or, when it is already gone (a billing
+     * block loaded later), does what it does for a JS string: looks the text up
+     * in the strings CiviCRM added to the page and fills in %1, %2...
+     */
+    var civiTs = typeof window.ts === 'function' ? window.ts : function(text, params) {
+      var strings = CRM['strings::' + params.domain] || {};
+      text = strings[text] || (CRM.strings || {})[text] || text;
+      for (var i in params) {
+        if (typeof params[i] === 'string' || typeof params[i] === 'number') {
+          text = text.replace(new RegExp('%' + i, 'g'), String(params[i]).replace(/%/g, '%-crmescaped-'));
+        }
+      }
+      return text.replace(/%-crmescaped-/g, '%');
+    };
+    return function(text, params) {
+      return civiTs(text, CRM.$.extend({}, params, {domain: domain}));
+    };
+  }('org.civicrm.square'))));

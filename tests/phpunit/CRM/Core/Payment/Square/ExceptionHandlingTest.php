@@ -112,6 +112,36 @@ class CRM_Core_Payment_Square_ExceptionHandlingTest extends CRM_Core_Payment_Squ
   }
 
   /**
+   * A card that fails verification when saved on file is a payment failure.
+   *
+   * The Square sandbox answers CreateCard for its declined, bad-CVV and
+   * bad-ZIP test cards with this INVALID_REQUEST_ERROR, not a
+   * PAYMENT_METHOD_ERROR, so recurring checkout must not treat it as an
+   * unexpected failure.
+   */
+  public function testCardOnFileVerificationFailureUsesCorePaymentFailureException(): void {
+    $cards = $this->createMock(CardsClient::class);
+    $exception = $this->apiException(400, [
+      [
+        'category' => 'INVALID_REQUEST_ERROR',
+        'code' => 'INVALID_CARD_DATA',
+        'detail' => 'Invalid card data.',
+      ],
+    ]);
+    $cards->method('create')->willThrowException($exception);
+    $processor = $this->processorWithMockClient(['cards' => $cards]);
+
+    try {
+      $processor->createCardOnFile('customer-1', 'cnon:card-nonce-declined');
+      $this->fail('A card that fails verification must throw.');
+    }
+    catch (PaymentProcessorException $e) {
+      $this->assertStringContainsString('The card could not be verified.', $e->getMessage());
+      $this->assertSame($exception, $e->getPrevious());
+    }
+  }
+
+  /**
    * A failed card save is logged with its stack trace: not the card nonce.
    *
    * CiviCRM logs a payment failure's stack trace with its arguments.

@@ -17,6 +17,15 @@ use CRM_Square_ExtensionUtil as E;
 class CRM_Square_Gateway {
 
   /**
+   * Square error codes that mean the card was refused, whatever their category.
+   *
+   * Square's Cards API reports a card that fails verification when it is
+   * saved on file (declined, wrong CVV, wrong ZIP) as INVALID_REQUEST_ERROR /
+   * INVALID_CARD_DATA, not as a PAYMENT_METHOD_ERROR, and does not say which.
+   */
+  public const CARD_REJECTION_CODES = ['INVALID_CARD_DATA'];
+
+  /**
    * Payment-processor instance configuration (a civicrm_payment_processor row).
    *
    * @var array
@@ -182,7 +191,9 @@ class CRM_Square_Gateway {
     $errorDetails = [];
     $isPaymentMethodError = FALSE;
     foreach ($e->getErrors() as $err) {
-      $isPaymentMethodError = $isPaymentMethodError || $err->getCategory() === 'PAYMENT_METHOD_ERROR';
+      $isPaymentMethodError = $isPaymentMethodError
+        || $err->getCategory() === 'PAYMENT_METHOD_ERROR'
+        || in_array($err->getCode(), self::CARD_REJECTION_CODES, TRUE);
       $code = $err->getCode() ?: 'UNKNOWN';
       $detail = $err->getDetail() ?? '';
       $errorDetails[] = "{$code}: {$detail}";
@@ -241,6 +252,10 @@ class CRM_Square_Gateway {
 
         case 'INSUFFICIENT_FUNDS':
           $messages[] = E::ts('The card has insufficient funds.');
+          break;
+
+        case 'INVALID_CARD_DATA':
+          $messages[] = E::ts('The card could not be verified. Please check the card number, expiration date, security code and billing ZIP/postal code, or use a different card.');
           break;
 
         default:
