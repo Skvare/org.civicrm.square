@@ -428,6 +428,56 @@ if (!class_exists('Civi')) {
     }
 
     /**
+     * Values cached during the current test, by key (every cache shares it).
+     *
+     * @var array
+     */
+    public static array $cache = [];
+
+    /**
+     * @param string $name
+     *
+     * @return object
+     */
+    public static function cache($name = 'default') {
+      return new class() {
+
+        /**
+         * @param string $key
+         * @param mixed $default
+         *
+         * @return mixed
+         */
+        public function get($key, $default = NULL) {
+          return array_key_exists($key, Civi::$cache) ? Civi::$cache[$key] : $default;
+        }
+
+        /**
+         * @param string $key
+         * @param mixed $value
+         * @param int|null $ttl
+         *
+         * @return bool
+         */
+        public function set($key, $value, $ttl = NULL): bool {
+          Civi::$cache[$key] = $value;
+          return TRUE;
+        }
+
+        /**
+         * @param string $key
+         *
+         * @return bool
+         */
+        public function delete($key): bool {
+          unset(Civi::$cache[$key]);
+          return TRUE;
+        }
+
+      };
+    }
+
+    /**
      * @param string $channel
      *
      * @return object

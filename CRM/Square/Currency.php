@@ -77,4 +77,19 @@ class CRM_Square_Currency {
     return (float) $minorUnits / (10 ** self::decimals($currency));
   }
 
+  /**
+   * An amount formatted for display, e.g. "$5.00".
+   *
+   * @param float|int|string $amount
+   * @param string|null $currency
+   *
+   * @return string
+   */
+  public static function format($amount, ?string $currency): string {
+    if (class_exists('CRM_Utils_Money') && method_exists('CRM_Utils_Money', 'format')) {
+      return (string) CRM_Utils_Money::format($amount, $currency);
+    }
+    return trim(number_format((float) $amount, self::decimals($currency), '.', ',') . ' ' . strtoupper((string) $currency));
+  }
+
 }

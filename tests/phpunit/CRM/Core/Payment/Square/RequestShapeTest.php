@@ -146,7 +146,11 @@ class CRM_Core_Payment_Square_RequestShapeTest extends CRM_Core_Payment_Square_S
       return new CreatePaymentResponse(['payment' => new Payment(['id' => 'pay_jpy', 'status' => 'COMPLETED'])]);
     });
 
-    $processor = $this->processorWithMockClient(['payments' => $paymentsMock]);
+    // A location in Japan, which takes yen.
+    $processor = $this->processorWithMockClient([
+      'payments' => $paymentsMock,
+      'locations' => $this->locationsClient('JPY'),
+    ]);
     $params = ['square_payment_token' => 'cnon:yen', 'amount' => '100', 'currency' => 'JPY', 'invoiceID' => 'inv-jpy'];
     $processor->doPayment($params);
 

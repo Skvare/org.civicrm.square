@@ -346,23 +346,52 @@ class CRM_Core_Payment_Square_ExceptionHandlingTest extends CRM_Core_Payment_Squ
         'The billing ZIP/postal code did not match the card.',
       ],
       'insufficient funds' => ['INSUFFICIENT_FUNDS', 'The card has insufficient funds.'],
+      'card expired' => ['CARD_EXPIRED', 'The card has expired. Please use a different card.'],
+      'call issuer' => [
+        'CARD_DECLINED_CALL_ISSUER',
+        'The card was declined. Please contact your card issuer, or use a different card.',
+      ],
+      'verification required' => [
+        'CARD_DECLINED_VERIFICATION_REQUIRED',
+        'The card was declined because it could not be verified. Please try again, or use a different card.',
+      ],
+      'verify cvv' => ['VERIFY_CVV_FAILURE', 'The CVV security code is incorrect.'],
+      'verify avs' => ['VERIFY_AVS_FAILURE', 'The billing ZIP/postal code did not match the card.'],
+      'invalid card' => ['INVALID_CARD', 'The card number is invalid. Please check it, or use a different card.'],
+      'card not supported' => ['CARD_NOT_SUPPORTED', 'This type of card is not accepted. Please use a different card.'],
+      'transaction limit' => [
+        'TRANSACTION_LIMIT',
+        'The amount is over the limit allowed for this card. Please use a different card.',
+      ],
     ];
   }
 
-  public function testTranslateSquareCardErrorFallsBackToDetailForUnknownCodes(): void {
+  public function testTranslateSquareCardErrorLogsSquaresDetailForUnknownCodes(): void {
+    Civi::$logged = [];
     $error = new Error([
       'category' => 'PAYMENT_METHOD_ERROR',
       'code' => 'SOME_NEW_CODE',
       'detail' => 'A brand new failure reason.',
     ]);
     $message = $this->callMethod(new CRM_Square_Customers(new CRM_Square_Gateway($this->processorConfig())), 'translateSquareCardError', [[$error]]);
-    $this->assertSame('A brand new failure reason.', $message);
+    // Square's English detail is never shown to the payer untranslated.
+    $this->assertSame('The card could not be processed. Please check its details, or use a different card.', $message);
+    $this->assertLogged('info', 'SOME_NEW_CODE: A brand new failure reason.');
   }
 
   public function testTranslateSquareCardErrorFallsBackToGenericMessageWithNoDetail(): void {
     $error = new Error(['category' => 'PAYMENT_METHOD_ERROR', 'code' => 'SOME_NEW_CODE']);
     $message = $this->callMethod(new CRM_Square_Customers(new CRM_Square_Gateway($this->processorConfig())), 'translateSquareCardError', [[$error]]);
-    $this->assertSame('The card could not be processed.', $message);
+    $this->assertSame('The card could not be processed. Please check its details, or use a different card.', $message);
+  }
+
+  public function testTranslateSquareCardErrorShowsEachMessageOnce(): void {
+    $errors = [
+      new Error(['category' => 'PAYMENT_METHOD_ERROR', 'code' => 'CVV_FAILURE']),
+      new Error(['category' => 'PAYMENT_METHOD_ERROR', 'code' => 'VERIFY_CVV_FAILURE']),
+    ];
+    $message = $this->callMethod(new CRM_Square_Customers(new CRM_Square_Gateway($this->processorConfig())), 'translateSquareCardError', [$errors]);
+    $this->assertSame('The CVV security code is incorrect.', $message);
   }
 
 }

@@ -85,15 +85,65 @@ function square_civicrm_merge($type, &$data, $mainId = NULL, $otherId = NULL, $t
 }
 
 /**
+ * Implements hook_civicrm_post().
+ *
+ * Queues a contact whose name or email changed, so its Square customers are
+ * updated at the end of the request (see CRM_Square_CustomerSync). Contacts
+ * with no Square customer cost one query, once per request.
+ */
+function square_civicrm_post($op, $objectName, $objectId, &$objectRef): void {
+  try {
+    $isContact = in_array($objectName, ['Individual', 'Organization', 'Household', 'Contact'], TRUE);
+    if ($isContact && in_array($op, ['edit', 'merge'], TRUE)) {
+      CRM_Square_CustomerSync::queue((int) $objectId);
+    }
+    elseif ($objectName === 'Email' && in_array($op, ['create', 'edit'], TRUE)) {
+      $contactId = is_object($objectRef) ? ($objectRef->contact_id ?? NULL) : NULL;
+      if (empty($contactId) && $objectId) {
+        $contactId = CRM_Core_DAO::getFieldValue('CRM_Core_DAO_Email', $objectId, 'contact_id');
+      }
+      CRM_Square_CustomerSync::queue((int) $contactId);
+    }
+  }
+  catch (\Throwable $e) {
+    // Never let the Square customer sync break a contact edit.
+    \Civi::log('square')->warning('Square: could not queue a Square customer update: ' . $e->getMessage());
+  }
+}
+
+/**
+ * Implements hook_civicrm_check().
+ *
+ * @see CRM_Square_Check
+ */
+function square_civicrm_check(&$messages, $statusNames = [], $includeDisabled = FALSE): void {
+  try {
+    $messages = array_merge($messages, (new CRM_Square_Check())->run());
+  }
+  catch (\Throwable $e) {
+    \Civi::log('square')->error('Square: system check failed: ' . $e->getMessage());
+  }
+}
+
+/**
  * Implements hook_civicrm_navigationMenu().
  *
- * Adds "Square Settings" under Administer > System Settings.
+ * Adds "Square Settings" and "Square Webhooks" under Administer > System
+ * Settings.
  */
 function square_civicrm_navigationMenu(&$menu): void {
   _square_civix_insert_navigation_menu($menu, 'Administer/System Settings', [
     'label' => \CRM_Square_ExtensionUtil::ts('Square Settings'),
     'name' => 'square_settings',
     'url' => 'civicrm/admin/setting/square?reset=1',
+    'permission' => 'administer CiviCRM',
+    'operator' => 'OR',
+    'separator' => 0,
+  ]);
+  _square_civix_insert_navigation_menu($menu, 'Administer/System Settings', [
+    'label' => \CRM_Square_ExtensionUtil::ts('Square Webhooks'),
+    'name' => 'square_webhooks',
+    'url' => 'civicrm/admin/square/webhook?reset=1',
     'permission' => 'administer CiviCRM',
     'operator' => 'OR',
     'separator' => 0,

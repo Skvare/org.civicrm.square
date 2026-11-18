@@ -34,6 +34,8 @@ class CRM_Core_Payment_Square_RecurringInstallmentTest extends CRM_Core_Payment_
     $client = new SquareClient(token: 'test-token', options: ['baseUrl' => 'https://example.invalid']);
     $client->payments = $payments;
     $client->subscriptions = $subscriptions;
+    $client->locations = $this->locationsClient();
+    Civi::$cache = [];
     $processor = new CRM_Core_Payment_Square_FakeLedgerProcessor($this->processorConfig(['id' => self::PROCESSOR_ID]), $client);
     $this->seedCheckout($processor);
     $processor->recurs[self::RECUR_ID]['processor_id'] = NULL;
@@ -61,6 +63,46 @@ class CRM_Core_Payment_Square_RecurringInstallmentTest extends CRM_Core_Payment_
     $this->assertNull($result['trxn_id'], 'The subscription ID is not a payment ID and must not become the contribution trxn_id.');
     $this->assertSame('NEW-SUBSCRIPTION', $processor->recurs[self::RECUR_ID]['processor_id']);
     $this->assertSame(2, $processor->recurs[self::RECUR_ID]['contribution_status_id'], 'The series stays Pending until its first payment is recorded.');
+  }
+
+  /**
+   * A future first installment: Square starts the subscription on that date.
+   */
+  public function testDoRecurPaymentStartsTheSubscriptionOnAFutureReceiveDate(): void {
+    $captured = NULL;
+    $subscriptions = $this->createMock(SubscriptionsClient::class);
+    $subscriptions->method('create')->willReturnCallback(function (CreateSubscriptionRequest $request) use (&$captured) {
+      $captured = $request;
+      return new CreateSubscriptionResponse([
+        'subscription' => new Subscription(['id' => 'NEW-SUBSCRIPTION', 'status' => 'PENDING']),
+      ]);
+    });
+    $client = new SquareClient(token: 'test-token', options: ['baseUrl' => 'https://example.invalid']);
+    $client->payments = $this->createMock(PaymentsClient::class);
+    $client->subscriptions = $subscriptions;
+    $client->locations = $this->locationsClient();
+    Civi::$cache = [];
+    $processor = new CRM_Core_Payment_Square_FakeLedgerProcessor($this->processorConfig(['id' => self::PROCESSOR_ID]), $client);
+    $this->seedCheckout($processor);
+    $processor->recurs[self::RECUR_ID]['processor_id'] = NULL;
+    $startDate = date('Y-m-d', strtotime('+10 days'));
+
+    $params = [
+      'square_payment_token' => 'cnon:card-nonce',
+      'amount' => '19.00',
+      'currency' => 'USD',
+      'is_recur' => 1,
+      'contributionRecurID' => self::RECUR_ID,
+      'contributionID' => self::SIGNUP_CONTRIBUTION_ID,
+      'contactID' => 7,
+      'frequency_unit' => 'day',
+      'frequency_interval' => 1,
+      'receive_date' => date('YmdHis', strtotime($startDate . ' 10:00:00')),
+    ];
+    $result = $processor->doPayment($params);
+
+    $this->assertSame($startDate, $captured->getStartDate());
+    $this->assertSame('Pending', $result['payment_status'], 'Pending until Square charges the first installment, on the start date.');
   }
 
   /**

@@ -13,3 +13,42 @@ use Civi\Api4\Generic\DAOEntity;
 class PaymentprocessorWebhook extends DAOEntity {
 
 }
+
+namespace Civi\Firewall;
+
+/**
+ * The Firewall extension's main class.
+ *
+ * A stub for PHPStan only: CRM_Square_Firewall uses the Firewall extension
+ * when it is installed, which it is not where static analysis runs.
+ */
+class Firewall {
+
+  /**
+   * The client's IP address.
+   *
+   * @return string
+   */
+  public function getIPAddress() {
+    return '';
+  }
+
+}
+
+namespace Civi\Firewall\Event;
+
+/**
+ * The Firewall extension's declined-card event. A stub for PHPStan only.
+ */
+class DeclinedCardEvent {
+
+  /**
+   * Record a declined card from an IP address.
+   *
+   * @param string $ipAddress
+   * @param string $source
+   */
+  public static function trigger($ipAddress, $source) {
+  }
+
+}

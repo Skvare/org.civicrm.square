@@ -11,6 +11,15 @@
 | `CRM/Square/Reconciler.php` | Webhook-driven sync into CiviCRM: payments, subscription installments, refunds, and recurring status. Its protected find/record methods are its only CiviCRM data access. |
 | `CRM/Square/Status.php` | CiviCRM option values by name, and Square-to-CiviCRM status mappings. |
 | `CRM/Square/Currency.php` | Conversion between CiviCRM amounts and Square's smallest currency units (cents for USD, whole yen for JPY). |
+| `CRM/Square/Locations.php` | The processor's Square location (status, currency, time zone), cached; checkout refuses a payment in a currency the location does not take. |
+| `CRM/Square/Webhooks.php` | Finds, checks and creates or repairs the processor's Square webhook subscription, saving its signature key on the processor. |
+| `CRM/Square/EventRecovery.php` | Fetches recent events from Square's Events API and hands any CiviCRM never received to `CRM_Core_Payment_SquareIPN`, as if their webhooks had arrived. |
+| `CRM/Square/CustomerSync.php` | Updates Square customers when their contacts' names or emails change (queued by `square_civicrm_post()`). |
+| `CRM/Square/Check.php` | System Status checks (`square_civicrm_check()`). |
+| `CRM/Square/Firewall.php` | Reports cards Square declines on public forms to the Firewall extension, when installed. |
+| `CRM/Square/Processors.php` | The active Square processors of the current domain. |
+| `CRM/Square/Form/Settings.php`, `CRM/Square/Form/Webhooks.php` | The Square Settings and Square Webhooks admin pages. |
+| `api/v3/Square/Recoverevents.php` | `Square.recoverevents`, run hourly by the managed scheduled job in `managed/Job_SquareRecoverEvents.mgd.php`. |
 | `CRM/Square/Compat.php` | Calls into CiviCRM core that differ between the supported versions, chosen by the running version (`CRM_Utils_System::version()`). |
 | `CRM/Core/Payment/SquareIPN.php` | Webhook filtering, deduplication, queue persistence, and processing. |
 | `CRM/Core/Payment/SquareDebugLogger.php` | Opt-in diagnostic logging. |

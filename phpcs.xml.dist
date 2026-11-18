@@ -7,6 +7,7 @@
   indentation.</description>
 
   <file>CRM</file>
+  <file>api</file>
   <file>square.php</file>
   <file>settings</file>
   <file>tests</file>

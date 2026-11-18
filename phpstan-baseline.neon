@@ -21,6 +21,21 @@ parameters:
 			path: CRM/Square/Form/Settings.php
 
 		-
+			message: "#^Call to an undefined method CRM_Square_Form_Settings\\:\\:addRule\\(\\)\\.$#"
+			count: 1
+			path: CRM/Square/Form/Settings.php
+
+		-
+			message: "#^Call to an undefined method CRM_Square_Form_Settings\\:\\:addFormRule\\(\\)\\.$#"
+			count: 1
+			path: CRM/Square/Form/Settings.php
+
+		-
+			message: "#^Call to an undefined method CRM_Square_Form_Webhooks\\:\\:exportValues\\(\\)\\.$#"
+			count: 1
+			path: CRM/Square/Form/Webhooks.php
+
+		-
 			message: "#^Ternary operator condition is always true\\.$#"
 			count: 1
 			path: CRM/Square/Gateway.php

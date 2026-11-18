@@ -238,15 +238,34 @@ class CRM_Square_Gateway {
           $messages[] = E::ts('The card was declined by the bank.');
           break;
 
+        case 'CARD_DECLINED_CALL_ISSUER':
+          $messages[] = E::ts('The card was declined. Please contact your card issuer, or use a different card.');
+          break;
+
+        case 'CARD_DECLINED_VERIFICATION_REQUIRED':
+          $messages[] = E::ts('The card was declined because it could not be verified. Please try again, or use a different card.');
+          break;
+
+        case 'CARD_EXPIRED':
+          $messages[] = E::ts('The card has expired. Please use a different card.');
+          break;
+
         case 'INVALID_EXPIRATION':
+        case 'INVALID_EXPIRATION_DATE':
+        case 'INVALID_EXPIRATION_YEAR':
+        case 'BAD_EXPIRATION':
+        case 'EXPIRATION_FAILURE':
           $messages[] = E::ts('The card expiration date is invalid.');
           break;
 
         case 'CVV_FAILURE':
+        case 'VERIFY_CVV_FAILURE':
           $messages[] = E::ts('The CVV security code is incorrect.');
           break;
 
         case 'ADDRESS_VERIFICATION_FAILURE':
+        case 'VERIFY_AVS_FAILURE':
+        case 'INVALID_POSTAL_CODE':
           $messages[] = E::ts('The billing ZIP/postal code did not match the card.');
           break;
 
@@ -254,17 +273,38 @@ class CRM_Square_Gateway {
           $messages[] = E::ts('The card has insufficient funds.');
           break;
 
+        case 'INVALID_CARD':
+        case 'INVALID_ACCOUNT':
+        case 'PAN_FAILURE':
+          $messages[] = E::ts('The card number is invalid. Please check it, or use a different card.');
+          break;
+
+        case 'CARD_NOT_SUPPORTED':
+        case 'UNSUPPORTED_CARD_BRAND':
+          $messages[] = E::ts('This type of card is not accepted. Please use a different card.');
+          break;
+
+        case 'TRANSACTION_LIMIT':
+        case 'PAYMENT_LIMIT_EXCEEDED':
+          $messages[] = E::ts('The amount is over the limit allowed for this card. Please use a different card.');
+          break;
+
         case 'INVALID_CARD_DATA':
           $messages[] = E::ts('The card could not be verified. Please check the card number, expiration date, security code and billing ZIP/postal code, or use a different card.');
           break;
 
         default:
-          $messages[] = !empty($err->getDetail()) ? $err->getDetail() : E::ts('The card could not be processed.');
+          // Square's own detail is English, and may say more about why than
+          // the payer should see: log it, and show a translated message.
+          if (!empty($err->getDetail())) {
+            Civi::log('square')->info("Square card error {$code}: " . $err->getDetail());
+          }
+          $messages[] = E::ts('The card could not be processed. Please check its details, or use a different card.');
           break;
       }
     }
 
-    return implode(' ', $messages);
+    return implode(' ', array_unique($messages));
   }
 
 }

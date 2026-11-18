@@ -36,6 +36,14 @@ required after cloning/downloading — just enable the extension as usual
 - Webhook event handling with deduplication and delivery logging
 - Supports sandbox (test) and production environments
 - Currency-aware amounts: Square amounts are in each currency's smallest unit, so JPY (which has no cents) is never multiplied by 100
+- A payment in a currency the processor's Square location does not take is refused with a clear message before Square is asked
+- Webhook subscriptions created and repaired from CiviCRM (**Administer → System Settings → Square Webhooks**), including their signature keys
+- Recovery of webhooks Square never delivered, from Square's Events API (hourly scheduled job, `Square.recoverevents`)
+- System Status checks: configuration, credentials, location and currency, webhook subscription, failed or stuck webhooks, mjwshared version, card-testing protection
+- Card-testing protection: a minimum card payment amount for public forms, and declined cards reported to the Firewall extension when it is installed
+- Optional card statement description for one-time payments
+- A later start date for back-office recurring contributions
+- Square customers' names and emails kept up to date when their contacts change
 
 ---
 
@@ -74,7 +82,7 @@ Separate sandbox credentials are supported for test mode. The processor automati
 
 A CiviCRM frequency with no Square equivalent (for example every 3 weeks) can't be billed by Square, and is refused at checkout before any card is saved.
 
-Recurring payments use the Square Catalog API to create subscription plans and plan variations on demand, then create a Square Subscription linked to a card-on-file. The subscription starts immediately and Square itself charges every installment, including the first — no separate charge is made at checkout. The checkout's contribution stays Pending until Square confirms that first charge by webhook, which then completes that same contribution; each later installment becomes a new contribution (via `Contribution.repeattransaction`) completed the same way. All payments are recorded with CiviCRM's `Payment.create`, and the Square payment ID becomes the contribution's and the payment's transaction ID.
+Recurring payments use the Square Catalog API to create subscription plans and plan variations on demand, then create a Square Subscription linked to a card-on-file. The subscription starts immediately (or on the Start Date staff set on the back-office form) and Square itself charges every installment, including the first — no separate charge is made at checkout. The checkout's contribution stays Pending until Square confirms that first charge by webhook, which then completes that same contribution; each later installment becomes a new contribution (via `Contribution.repeattransaction`) completed the same way. All payments are recorded with CiviCRM's `Payment.create`, and the Square payment ID becomes the contribution's and the payment's transaction ID.
 
 A donor can replace the card a recurring contribution is charged to, e.g. one that has expired, from CiviCRM's **Update billing details** link (`civicrm/contribute/updatebilling`, which calls `updateSubscriptionBillingInfo()`). The new card is saved to the subscription's Square customer, Square charges it from the next installment, and it becomes the recurring contribution's payment token. The old card stays on file at Square.
 
@@ -103,6 +111,8 @@ hours; any other failure is marked `error`. See
 | `invoice.scheduled_charge_failed` | Square could not charge the card on file: marks that installment's contribution Failed (the first installment's stays Pending, since Square keeps the invoice open). Ignored if Square reports the invoice paid by the time it is processed, since webhooks can arrive out of order |
 | `payment.updated` | Completes a one-time contribution; for a subscription payment, looks up its invoice at Square and records the installment exactly as `invoice.payment_made` does. A payment taken outside CiviCRM (Square Dashboard, Square Online, point of sale) is ignored unless **Import Square payments made outside CiviCRM** is enabled in Square Settings — and even then only at the processor's own Square location |
 | `refund.created`, `refund.updated` | Records a completed refund as a negative payment against the refunded payment, including a refund made from CiviCRM that was still `PENDING` at Square. A refund that arrives before its payment is recorded is retried |
+| `card.automatically_updated`, `card.updated` | Updates the expiry date and last 4 digits of the card's payment tokens (the card ID, which subscriptions charge, stays the same) |
+| `card.disabled`, `card.forgotten` | Logs a warning naming the recurring contributions that still charge the card, whose next installments will fail until the donor updates the card |
 
 Webhook deduplication uses the `civicrm_paymentprocessor_webhook` queue (provided by the mjwshared extension)
 and Square's globally unique event ID. Do not log webhook signatures, access
@@ -134,7 +144,9 @@ is mapped to it; otherwise a new one is created. Neither value alone is
 trusted: other Square products and integrations set `reference_id` to their own
 values, and family members often share one email address. Updating the
 customer's name and email at checkout is best-effort: if Square refuses, that
-is logged and the payment goes ahead.
+is logged and the payment goes ahead. When a contact's name or an email is
+saved in CiviCRM, its Square customers are updated at the end of the request
+(`square_civicrm_post()`, `CRM_Square_CustomerSync`), if they changed.
 
 When contacts are merged, the removed contact's mappings move to the
 contact kept (`square_civicrm_merge()`); where both had a Square customer on
@@ -178,7 +190,10 @@ The card form's ZIP/postal code and the billing address's (`billing_postal_code-
 | `hook_civicrm_install` | Standard civix install (schema/table creation is handled separately by `CRM_Square_Upgrader`, not this hook) |
 | `hook_civicrm_enable` | Enforces `billing_mode = 1` on all Square payment processor instances |
 | `hook_civicrm_managed` | Wires up `managed/PaymentProcessorType.mgd.php` (registers the Square payment processor type) |
-| `hook_civicrm_navigationMenu` | Adds "Square Settings" under Administer → System Settings |
+| `hook_civicrm_navigationMenu` | Adds "Square Settings" and "Square Webhooks" under Administer → System Settings |
+| `hook_civicrm_merge` | Moves the merged-away contact's Square customer mappings to the contact kept |
+| `hook_civicrm_post` | Queues contacts whose name or email changed, to update their Square customers |
+| `hook_civicrm_check` | System Status checks (`CRM_Square_Check`) |
 
 ---
 
@@ -211,19 +226,31 @@ CRM/
     Status.php               CiviCRM option values and Square status mappings
     Currency.php             Amounts in Square's smallest currency units
     Compat.php               Calls into CiviCRM core that differ between supported versions
-    Form/Settings.php        Administer > System Settings > Square Settings (debug logging, external payment import)
+    Locations.php            The processor's Square location (currency, status), cached
+    Webhooks.php             Checks, creates and repairs the processor's Square webhook subscription
+    EventRecovery.php        Recovers events whose webhooks never arrived, from Square's Events API
+    CustomerSync.php         Updates Square customers when their contacts change
+    Check.php                System Status checks
+    Firewall.php             Reports declined cards to the Firewall extension
+    Processors.php           The active Square processors
+    Form/Settings.php        Administer > System Settings > Square Settings (debug logging, external payment import, minimum amount, statement description)
+    Form/Webhooks.php        Administer > System Settings > Square Webhooks
     Upgrader.php             Creates/drops the square_customer_map and square_catalog_map tables (see Database Tables)
 js/
   square.js                  Browser-side Square Web Payments SDK integration
+api/v3/Square/
+  Recoverevents.php          Square.recoverevents API (missed webhook recovery)
 managed/
   PaymentProcessorType.mgd.php  Registers the Square payment processor type
+  Job_SquareRecoverEvents.mgd.php  Hourly "Square: recover missed webhook events" scheduled job
 settings/
-  Square.setting.php         Declares the square_ipn_debug_logging and square_import_external_payments settings
+  Square.setting.php         Declares the extension's settings
 templates/
   CRM/Core/Payment/Square/Card.tpl  Card container HTML injected into billing block
   CRM/Square/Form/Settings.tpl      Settings form markup
-xml/Menu/square.xml          Route: civicrm/admin/setting/square -> CRM_Square_Form_Settings
-square.php                   Extension bootstrap and hooks (config/install/enable/managed/navigationMenu)
+  CRM/Square/Form/Webhooks.tpl      Square Webhooks page markup
+xml/Menu/square.xml          Routes: civicrm/admin/setting/square, civicrm/admin/square/webhook
+square.php                   Extension bootstrap and hooks (config/install/enable/merge/post/check/navigationMenu)
 tools/composer.json          Development tools (PHPUnit, PHPCS); never shipped (see docs/DEVELOPMENT.md)
 ```
 
@@ -238,12 +265,17 @@ the following:
    enable this extension.
 2. Create a Square payment processor in CiviCRM and enter the sandbox
    Application ID, Access Token, Location ID, and Webhook Signature Key.
-3. In the Square Developer Dashboard, create a webhook subscription for that
-   same sandbox application and set its notification URL to
-   `https://your-site.org/civicrm/payment/ipn/{processor_id}`. Replace
-   `{processor_id}` with the CiviCRM payment processor ID.
-4. Subscribe to the events in [Webhook Events](#webhook-events). Events not
-   listed there are acknowledged but intentionally ignored.
+3. At **Administer → System Settings → Square Webhooks**, click **Create /
+   update webhooks**: it creates the webhook subscription in the sandbox
+   application, with every event the extension handles, saves its signature
+   key on the processor, and enables Square event search for missed-webhook
+   recovery. (To do it by hand instead: in the Square Developer Dashboard,
+   create a subscription for
+   `https://your-site.org/civicrm/payment/ipn/{processor_id}` with the events
+   in [Webhook Events](#webhook-events), and copy its signature key into the
+   processor.)
+4. Check **Administer → Administration Console → System Status** for Square
+   messages: configuration, location currency, webhook subscription.
 5. Verify that mjwshared's **Process Payment Processor Webhooks** scheduled job
    is enabled. It retries queued records left in status `new` by a transient
    failure.
@@ -266,7 +298,8 @@ the CiviCRM log when reconciliation does not occur.
 
 | Symptom | Check |
 |---|---|
-| Webhook returns HTTP 401 | Verify the processor's Webhook Signature Key and the exact notification URL in Square. Do not trim or transform the raw request body. |
+| Webhook returns HTTP 401 | Verify the processor's Webhook Signature Key and the exact notification URL in Square (**Square Webhooks** shows the URL CiviCRM expects, and can generate a new key). Do not trim or transform the raw request body. |
+| An event never reached CiviCRM | The hourly **Square: recover missed webhook events** job fetches it from Square (once event search is enabled); run `Square.recoverevents` to do it now. |
 | Webhook returns HTTP 400 | Verify Square is posting valid JSON with an `event_id`. |
 | No change after a webhook | Confirm the event type is supported, the processor ID in the URL is correct, and the queue record is not in an error state. |
 | Repeated webhook delivery | Square retries deliveries that did not succeed: check for HTTP 401 or 400 above. An event that is recorded is acknowledged even if processing it fails; resolve the queue record's logged error instead. |

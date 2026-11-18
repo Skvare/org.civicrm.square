@@ -161,6 +161,20 @@ class CRM_Core_Payment_Square_WebhookQueueTest extends CRM_Core_Payment_Square_S
     $this->assertSame([], $ipn->records);
   }
 
+  public function testReceiveEventSaysWhatHappened(): void {
+    $ipn = $this->ipn();
+    $payload = $this->event();
+    $ipn->setData(json_encode($payload));
+
+    $this->assertSame(CRM_Core_Payment_SquareIPN::RECEIVED_PROCESSED, $ipn->receiveEvent($payload));
+    $this->assertSame(CRM_Core_Payment_SquareIPN::RECEIVED_DUPLICATE, $ipn->receiveEvent($payload));
+    $unsupported = ['type' => 'customer.created', 'event_id' => 'EVT-X'];
+    $this->assertSame(CRM_Core_Payment_SquareIPN::RECEIVED_UNSUPPORTED, $ipn->receiveEvent($unsupported));
+    unset($payload['event_id']);
+    $this->assertSame(CRM_Core_Payment_SquareIPN::RECEIVED_INVALID, $ipn->receiveEvent($payload));
+    $this->assertSame(1, $this->handled);
+  }
+
   public function testEventWithoutAnIdIsRejected(): void {
     $ipn = $this->ipn();
     $payload = $this->event();

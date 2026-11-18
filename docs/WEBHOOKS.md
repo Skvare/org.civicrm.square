@@ -2,17 +2,52 @@
 
 ## Configure Square
 
-For each CiviCRM Square processor, configure a Square webhook subscription:
+Each CiviCRM Square processor needs a Square webhook subscription, in the
+Square application whose access token it uses, sending events to:
 
 ```
 https://your-site.example/civicrm/payment/ipn/{processor_id}
 ```
 
-Replace `{processor_id}` with the CiviCRM payment processor ID. Use the Square
-application and signature key for the same sandbox or production environment.
-Subscribe to: `subscription.created`, `subscription.updated`,
-`invoice.created`, `invoice.payment_made`, `invoice.scheduled_charge_failed`,
-`payment.updated`, `refund.created`, and `refund.updated`.
+`{processor_id}` is the CiviCRM payment processor ID. Square only sends
+webhooks to `https://` URLs. The required events are `subscription.created`,
+`subscription.updated`, `invoice.created`, `invoice.payment_made`,
+`invoice.scheduled_charge_failed`, `payment.updated`, `refund.created`,
+`refund.updated`, `card.disabled`, `card.forgotten`,
+`card.automatically_updated`, and `card.updated`.
+
+### Automatic setup
+
+**Administer → System Settings → Square Webhooks** lists each active Square
+processor (live and test), its webhook URL, and what is wrong with its
+subscription. **Create / update webhooks** then, for each processor:
+
+- creates the subscription if there is none for its URL, and saves the
+  signature key Square generates on the processor (its Subject field);
+- otherwise enables it and adds any missing events, keeping any others it
+  sends;
+- generates a new signature key when the processor has none, or when **Also
+  generate new signature keys** is ticked (use this after "Square IPN:
+  signature validation failed" errors), and saves it on the processor;
+- with **Enable Square event search** ticked (the default), enables Square's
+  event search, so missed webhooks can be recovered (see below).
+
+The access token must be allowed to manage webhook subscriptions, as the
+application's own access token is. The System Status check (see below) warns
+when a subscription is missing or incomplete, with a link to this page.
+
+### Manual setup
+
+To set it up by hand instead, create the subscription in the Square Developer
+Dashboard with the URL and events above, and copy its signature key into the
+processor's **Square Webhook Signature Key** field. Use the application and
+signature key of the same sandbox or production environment.
+
+The `card.*` events keep payment tokens up to date (`card.automatically_updated`
+and `card.updated` update a card's expiry date and last 4 digits), and warn when
+a card a recurring contribution still charges was disabled or forgotten
+(`card.disabled`, `card.forgotten`). Subscriptions set up before these events
+were handled lack them: **Create / update webhooks** adds them.
 
 Square has no `subscription.canceled` or `invoice.payment_failed` event,
 although earlier versions of this extension listed them. A cancellation
@@ -97,6 +132,45 @@ not the subscription, so it is matched to its invoice at Square.
   arrive out of order, and Square retries failed charges), nothing is marked
   Failed.
 
+## Recovering missed webhooks
+
+If Square cannot deliver a webhook (the site was down, the subscription was
+missing an event, or it pointed at the wrong URL), it retries for a while and
+then gives up. The **Square: recover missed webhook events** scheduled job
+(hourly; `Square.recoverevents` API) fetches the events of the last 3 days from
+Square's Events API and processes each one CiviCRM never received, exactly as if
+its webhook had just arrived; events already received, in any queue state, are
+skipped. It records a warning in the CiviCRM log when it recovers anything.
+
+- Square only finds events from after its event search was enabled (see
+  [Automatic setup](#automatic-setup)), and only for 28 days. The job skips a
+  processor whose event search was never enabled from CiviCRM.
+- Like every scheduled job, it does not run on a site whose environment is not
+  Production, so a copy of a live site never imports live events.
+- To look further back, run it by hand, e.g.
+  `cv api3 Square.recoverevents since="-20 days"`, optionally with
+  `payment_processor_id`.
+- It does not reprocess events whose queue record is in `error`: fix the cause
+  and use the webhook queue's **Retry** action for those.
+
+## System Status checks
+
+**Administer → Administration Console → System Status** reports, for the
+Square processors:
+
+- a missing setting, credentials Square refuses, or an inactive Square location;
+- contribution pages or upcoming events using a processor whose Square location
+  takes another currency (Square takes payments in the location's currency
+  only);
+- on production sites, a missing, disabled or incomplete webhook subscription,
+  a signature key that does not match it, and event search not enabled;
+- Square webhooks in `error` in the last 30 days, and webhooks waiting more than
+  2 hours in `new` (cron or the **Process PaymentProcessor Webhooks** job not
+  running);
+- an mjwshared extension older than 1.5.5;
+- for live processors without the Firewall extension, a reminder about
+  card-testing protection.
+
 ## Refunds
 
 - Refunds made from CiviCRM's refund form (`doRefund()`) are recorded only
@@ -117,11 +191,12 @@ not the subscription, so it is matched to its invoice at Square.
 
 | Symptom | Check |
 |---|---|
-| HTTP 401 | Verify the webhook signature key and the exact configured URL. Scheme, hostname, path, proxy rewriting, and processor ID all matter. |
+| HTTP 401 | Verify the webhook signature key and the exact configured URL. Scheme, hostname, path, proxy rewriting, and processor ID all matter. **Square Webhooks** shows the URL CiviCRM expects; tick **Also generate new signature keys** there to replace a key that does not match. |
 | HTTP 400 | Check that Square posted valid JSON. |
 | No CiviCRM update | Inspect the queue record's event type, processor ID, status, and error message. |
 | Repeated delivery | Resolve the queue-record error; duplicate event IDs are otherwise skipped. |
 | First recurring contribution stays Pending | Check the queue for that subscription's `payment.updated` / `invoice.payment_made` records and their messages. |
+| An event never arrived | Run `Square.recoverevents` (see [Recovering missed webhooks](#recovering-missed-webhooks)), then check the subscription on **Square Webhooks**. |
 
 Do not log or share access tokens, signature keys, card tokens, raw webhook
 bodies, or unredacted Square responses. Enable temporary verbose diagnostics at

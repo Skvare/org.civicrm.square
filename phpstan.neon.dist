@@ -16,6 +16,7 @@ parameters:
     - %env.CIVICRM_CORE%/Civi
     - %env.CIVICRM_CORE%/api
     - %env.CIVICRM_CORE%/ext/civi_contribute
+    - %env.CIVICRM_CORE%/ext/civi_event
     - %env.CIVICRM_CORE%/vendor/pear
   scanFiles:
     - %env.CIVICRM_CORE%/Civi.php

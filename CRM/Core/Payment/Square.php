@@ -7,6 +7,7 @@ use Civi\Api4\PaymentToken;
 use Civi\Payment\Exception\PaymentProcessorException;
 use Civi\Payment\PropertyBag;
 use Square\SquareClient;
+use Square\Exceptions\SquareApiException;
 use Square\Types\CustomerDetails;
 use Square\Types\Money;
 use Square\Types\SubscriptionSource;
@@ -47,6 +48,11 @@ class CRM_Core_Payment_Square extends CRM_Core_Payment {
    * Microseconds between those checks.
    */
   protected const REFUND_STATUS_CHECK_INTERVAL = 1000000;
+
+  /**
+   * Longest statement description Square accepts with a payment.
+   */
+  public const STATEMENT_DESCRIPTION_MAX_LENGTH = 20;
 
   /**
    * Payment-processor instance configuration.
@@ -286,6 +292,23 @@ class CRM_Core_Payment_Square extends CRM_Core_Payment {
   }
 
   /**
+   * Bring a Square customer's name and email up to date with its contact.
+   *
+   * @param string $customerId
+   * @param int $contactId
+   * @param array $contact
+   *   The contact's first_name, last_name and (primary) email.
+   *
+   * @return bool
+   *   Whether Square was updated.
+   *
+   * @see CRM_Square_Customers::syncFromContact()
+   */
+  public function syncSquareCustomer(string $customerId, int $contactId, array $contact): bool {
+    return $this->customers()->syncFromContact($customerId, $contactId, $contact);
+  }
+
+  /**
    * Square subscription plans and subscriptions for this processor.
    *
    * @return \CRM_Square_Subscriptions
@@ -301,6 +324,37 @@ class CRM_Core_Payment_Square extends CRM_Core_Payment {
    */
   protected function reconciler(): CRM_Square_Reconciler {
     return new CRM_Square_Reconciler($this->gateway());
+  }
+
+  /**
+   * The Square location this processor takes payments at.
+   *
+   * @return \CRM_Square_Locations
+   */
+  public function locations(): CRM_Square_Locations {
+    return new CRM_Square_Locations($this->gateway());
+  }
+
+  /**
+   * The webhook subscription Square should notify this processor through.
+   *
+   * @return \CRM_Square_Webhooks
+   */
+  public function webhooks(): CRM_Square_Webhooks {
+    return new CRM_Square_Webhooks($this, $this->gateway());
+  }
+
+  /**
+   * The URL Square must send this processor's webhooks to.
+   *
+   * Exactly the URL validateWebhookSignature() checks signatures against:
+   * Square signs the URL it was configured with, so any difference
+   * (scheme, host, path) fails validation.
+   *
+   * @return string
+   */
+  public function getWebhookNotificationUrl(): string {
+    return (string) $this->getNotifyUrl();
   }
 
   /**
@@ -351,16 +405,16 @@ class CRM_Core_Payment_Square extends CRM_Core_Payment {
   public function checkConfig() {
     $missing = [];
     foreach ([
-      'user_name' => 'Application ID',
-      'password' => 'Access Token',
-      'signature' => 'Location ID',
-      'subject' => 'Webhook Signature Key',
+      'user_name' => E::ts('Application ID'),
+      'password' => E::ts('Access Token'),
+      'signature' => E::ts('Location ID'),
+      'subject' => E::ts('Webhook Signature Key'),
     ] as $field => $label) {
       if (trim((string) ($this->_paymentProcessor[$field] ?? '')) === '') {
         $missing[] = $label;
       }
     }
-    return $missing ? ts('Square configuration is missing: %1.', [1 => implode(', ', $missing)]) : NULL;
+    return $missing ? E::ts('Square configuration is missing: %1.', [1 => implode(', ', $missing)]) : NULL;
   }
 
   /**
@@ -528,6 +582,7 @@ class CRM_Core_Payment_Square extends CRM_Core_Payment {
     }
     catch (PaymentProcessorException $e) {
       // Square declined the card: CiviCRM's checkout cleans up.
+      $this->reportDeclinedCard($e, __METHOD__);
       throw $e;
     }
     catch (CRM_Core_Payment_SquareOutcomeUnknownException $e) {
@@ -551,6 +606,96 @@ class CRM_Core_Payment_Square extends CRM_Core_Payment {
       \Civi::log('square')->error('Square checkout failed: ' . $e->getMessage(), ['exception' => $e]);
       throw new PaymentProcessorException(E::ts('Your payment could not be processed. Please try again, or contact us if the problem continues.'), 0, [], $e);
     }
+  }
+
+  /**
+   * Tell the Firewall extension that Square declined a payer's card.
+   *
+   * Only for a card Square itself refused (the exception wraps Square's
+   * API error), and only on public forms: staff keying in cards are not
+   * card testers.
+   *
+   * @param \Civi\Payment\Exception\PaymentProcessorException $e
+   * @param string $source
+   */
+  protected function reportDeclinedCard(PaymentProcessorException $e, string $source): void {
+    if (!$this->isBackOffice() && $e->getPrevious() instanceof SquareApiException) {
+      CRM_Square_Firewall::declinedCard($source);
+    }
+  }
+
+  /**
+   * The smallest card payment public forms may take, from the settings.
+   *
+   * @return float
+   *   0 for no minimum.
+   */
+  protected function getMinimumAmount(): float {
+    return max(0.0, (float) Civi::settings()->get('square_min_amount'));
+  }
+
+  /**
+   * Refuse an amount below the minimum card payment, on public forms.
+   *
+   * Card testers try small amounts. A refused amount never reaches Square,
+   * so it costs nothing and tells the tester nothing about the card.
+   *
+   * @param float|string $amount
+   * @param string $currency
+   *
+   * @throws \Civi\Payment\Exception\PaymentProcessorException
+   */
+  protected function assertAmountAllowed($amount, string $currency): void {
+    $minimum = $this->getMinimumAmount();
+    if ($this->isBackOffice() || $minimum <= 0) {
+      return;
+    }
+    if (CRM_Square_Currency::toMinorUnits($amount, $currency) < CRM_Square_Currency::toMinorUnits($minimum, $currency)) {
+      \Civi::log('square')->warning("Square: refused a {$amount} {$currency} payment on payment processor {$this->processorId()}, below the minimum of {$minimum}.");
+      throw new PaymentProcessorException(E::ts('The minimum amount for a card payment is %1.', [1 => CRM_Square_Currency::format($minimum, $currency)]));
+    }
+  }
+
+  /**
+   * Refuse a payment in a currency the processor's Square location does not take.
+   *
+   * Square would refuse it anyway, and the payer would only be told the
+   * payment could not be processed. If the location cannot be looked up,
+   * the payment goes ahead and Square decides.
+   *
+   * @param string $currency
+   *
+   * @throws \Civi\Payment\Exception\PaymentProcessorException
+   */
+  protected function assertLocationCurrency(string $currency): void {
+    try {
+      $locationCurrency = $this->locations()->getCurrency();
+    }
+    catch (\Throwable $e) {
+      \Civi::log('square')->warning("Square: could not look up the currency of the Square location of payment processor {$this->processorId()}: " . $e->getMessage());
+      return;
+    }
+    if ($locationCurrency === NULL || strcasecmp($locationCurrency, $currency) === 0) {
+      return;
+    }
+    \Civi::log('square')->error("Square: payment processor {$this->processorId()}'s Square location takes {$locationCurrency}, so a {$currency} payment was refused before reaching Square. Use a {$locationCurrency} contribution page or event, or a Square location that takes {$currency}.");
+    $message = $this->isBackOffice()
+      ? E::ts('This Square account takes payments in %1 only, so this %2 payment cannot be taken with it.', [
+        1 => $locationCurrency,
+        2 => $currency,
+      ])
+      : E::ts('Card payments in %1 cannot be taken here. Please contact us.', [1 => $currency]);
+    throw new PaymentProcessorException($message);
+  }
+
+  /**
+   * The statement description to send with one-time payments, from the settings.
+   *
+   * @return string|null
+   */
+  protected function getStatementDescription(): ?string {
+    $description = trim((string) Civi::settings()->get('square_statement_description'));
+    return $description === '' ? NULL : mb_substr($description, 0, self::STATEMENT_DESCRIPTION_MAX_LENGTH);
   }
 
   /**
@@ -628,6 +773,8 @@ class CRM_Core_Payment_Square extends CRM_Core_Payment {
 
     $currency = $params['currency'] ?? $params['currencyID'] ?? 'USD';
     $amountMinorUnits = CRM_Square_Currency::toMinorUnits($amount, $currency);
+    $this->assertAmountAllowed($amount, $currency);
+    $this->assertLocationCurrency($currency);
 
     // 3. Idempotency key, derived from the checkout's own reference so that a
     // retried request for the same checkout can never charge twice. Without
@@ -683,6 +830,12 @@ class CRM_Core_Payment_Square extends CRM_Core_Payment {
     // Optional reference.
     if (!empty($params['invoiceID'])) {
       $requestValues['referenceId'] = (string) $params['invoiceID'];
+    }
+
+    // Added to the payer's card statement, after the business name.
+    $statementDescription = $this->getStatementDescription();
+    if ($statementDescription !== NULL) {
+      $requestValues['statementDescriptionIdentifier'] = $statementDescription;
     }
 
     // 5. Send request. A decline or rejected request means nothing was
@@ -759,10 +912,11 @@ class CRM_Core_Payment_Square extends CRM_Core_Payment {
    *     - $params['payment_token'] or
    *     - $params['token']
    * - Saves the card on file and creates a Square Subscription that starts
-   *   immediately. Square itself charges the first installment, so no
-   *   separate payment is made here, and the checkout's contribution is
-   *   reported Pending: it is completed when Square confirms that charge
-   *   (see recordSubscriptionInstallment()).
+   *   immediately, or on a future receive_date (see
+   *   getSubscriptionStartDate()). Square itself charges the first
+   *   installment, so no separate payment is made here, and the checkout's
+   *   contribution is reported Pending: it is completed when Square
+   *   confirms that charge (see recordSubscriptionInstallment()).
    *
    * @param array $params
    *   Contribution / participant params.
@@ -784,6 +938,10 @@ class CRM_Core_Payment_Square extends CRM_Core_Payment {
       throw new \CRM_Core_Exception('Missing contribution amount.');
     }
     $params['square_payment_token'] = $token;
+    // CiviCRM's back-office membership form passes only currencyID.
+    $currency = $params['currency'] ?? $params['currencyID'] ?? 'USD';
+    $this->assertAmountAllowed($amount, $currency);
+    $this->assertLocationCurrency($currency);
 
     // 2. Ensure we have a valid Recurring Contribution ID from CiviCRM.
     $recurId = $params['contributionRecurID'] ?? NULL;
@@ -821,21 +979,28 @@ class CRM_Core_Payment_Square extends CRM_Core_Payment {
     ];
     $note = json_encode($source, JSON_UNESCAPED_SLASHES);
 
-    // 7. Build subscription payload. startDate is deliberately omitted:
-    // Square then starts the subscription today (in the location's time
-    // zone) and immediately bills its first invoice to the card on file.
-    // That charge is the first installment. Previously this code set
-    // start_date to tomorrow AND made a separate immediate CreatePayment for
-    // today, which charged the donor twice once Square billed its own first
-    // invoice.
-    $createSubscriptionRequest = new CreateSubscriptionRequest([
+    // 7. Build subscription payload. Without a startDate, Square starts the
+    // subscription today (in the location's time zone) and immediately
+    // bills its first invoice to the card on file. That charge is the first
+    // installment. A future start date (see getSubscriptionStartDate())
+    // moves it, and every later one, to that date. Either way no separate
+    // payment is made here: previously this code set start_date to
+    // tomorrow AND made a CreatePayment for today, which charged the donor
+    // twice once Square billed its own first invoice.
+    $subscriptionValues = [
       'idempotencyKey' => $idempotencyKey,
       'locationId' => $this->getLocationId(),
       'planVariationId' => $planVariationId,
       'customerId' => $customerId,
       'cardId' => $cardId,
       'source' => new SubscriptionSource(['name' => $note]),
-    ]);
+    ];
+    $startDate = $this->getSubscriptionStartDate($params);
+    if ($startDate !== NULL) {
+      $subscriptionValues['startDate'] = $startDate;
+      CRM_Core_Payment_SquareDebugLogger::log("Square doRecurPayment: subscription for CiviCRM recur ID {$recurId} starts on {$startDate}");
+    }
+    $createSubscriptionRequest = new CreateSubscriptionRequest($subscriptionValues);
 
     // 8. Send subscription create request. Square bills the first
     // installment as soon as the subscription exists, so once this may have
@@ -880,6 +1045,47 @@ class CRM_Core_Payment_Square extends CRM_Core_Payment {
     $params['subscription_id'] = $subscriptionId;
 
     return $params;
+  }
+
+  /**
+   * The date a new subscription should start on, if not today.
+   *
+   * CiviCRM passes the first installment's date as receive_date: the
+   * back-office contribution form's "Start Date" (shown because
+   * supportsFutureRecurStartDate() says so), or a form or extension that
+   * sets it. Only a date after today counts; anything else (including the
+   * "now" most forms pass) starts the subscription today. Square takes the
+   * date as YYYY-MM-DD in the location's time zone; a date after today here
+   * can never be in the past there.
+   *
+   * @param array $params
+   *
+   * @return string|null
+   *   YYYY-MM-DD, or NULL to start today.
+   */
+  protected function getSubscriptionStartDate(array $params): ?string {
+    $receiveDate = $params['receive_date'] ?? NULL;
+    if (empty($receiveDate)) {
+      return NULL;
+    }
+    $timestamp = strtotime((string) $receiveDate);
+    if ($timestamp === FALSE) {
+      return NULL;
+    }
+    $startDate = date('Y-m-d', $timestamp);
+    return $startDate > date('Y-m-d') ? $startDate : NULL;
+  }
+
+  /**
+   * Whether the first installment of a recurring contribution can be on a later date.
+   *
+   * It can: a Square subscription takes a start date. CiviCRM then shows a
+   * Start Date on the back-office credit card contribution form.
+   *
+   * @return bool
+   */
+  public function supportsFutureRecurStartDate() {
+    return TRUE;
   }
 
   /**
@@ -962,16 +1168,16 @@ class CRM_Core_Payment_Square extends CRM_Core_Payment {
   public function doRefund(&$params) {
     $trxnId = $params['trxn_id'] ?? $params['transaction_id'] ?? NULL;
     if (empty($trxnId)) {
-      throw new PaymentProcessorException('Missing transaction ID for refund.');
+      throw new PaymentProcessorException(E::ts('Missing transaction ID for refund.'));
     }
 
     if (empty($params['amount'])) {
-      throw new PaymentProcessorException('Missing refund amount.');
+      throw new PaymentProcessorException(E::ts('Missing refund amount.'));
     }
 
     $rawAmount = (float) $params['amount'];
     if ($rawAmount <= 0) {
-      throw new PaymentProcessorException('Refund amount must be greater than zero.');
+      throw new PaymentProcessorException(E::ts('Refund amount must be greater than zero.'));
     }
 
     try {
@@ -981,7 +1187,7 @@ class CRM_Core_Payment_Square extends CRM_Core_Payment {
       $currency = $paymentCurrency ?? $params['currencyID'] ?? $params['currency'] ?? 'USD';
       $amountMinorUnits = CRM_Square_Currency::toMinorUnits($rawAmount, $currency);
       if ($amountMinorUnits <= 0) {
-        throw new PaymentProcessorException('Refund amount must be greater than zero.');
+        throw new PaymentProcessorException(E::ts('Refund amount must be greater than zero.'));
       }
 
       // The key changes once CiviCRM has recorded a refund, so a further
@@ -1008,7 +1214,7 @@ class CRM_Core_Payment_Square extends CRM_Core_Payment {
     }
 
     if (empty($refund) || empty($refund->getId())) {
-      throw new PaymentProcessorException('Square refund failed: unexpected response.');
+      throw new PaymentProcessorException(E::ts('Square refund failed: unexpected response.'));
     }
 
     $status = strtoupper($refund->getStatus() ?? 'UNKNOWN');
@@ -1019,7 +1225,7 @@ class CRM_Core_Payment_Square extends CRM_Core_Payment {
       throw new PaymentProcessorException(E::ts('Square accepted refund %1 but has not completed it yet, so it is not recorded in CiviCRM now. It will be recorded automatically once Square completes it. Any event registrations or memberships you selected for cancellation have not been cancelled: cancel them by hand. Do not refund this payment again.', [1 => $refund->getId()]));
     }
     if (!in_array($status, ['COMPLETED', 'APPROVED'], TRUE)) {
-      throw new PaymentProcessorException("Square refund not completed. Status: {$status}");
+      throw new PaymentProcessorException(E::ts('Square refund not completed. Status: %1', [1 => $status]));
     }
 
     $createdAt = $refund->getCreatedAt();
@@ -1156,7 +1362,7 @@ class CRM_Core_Payment_Square extends CRM_Core_Payment {
       throw $e;
     }
     catch (\Throwable $e) {
-      $errorMessage = E::ts('Failed to cancel the Square subscription: ') . $e->getMessage();
+      $errorMessage = E::ts('Failed to cancel the Square subscription: %1', [1 => $e->getMessage()]);
       \Civi::log('square')->error($errorMessage);
       // $previous is CRM_Core_Exception's 4th constructor argument
       // ($message, $error_code, $errorData, $previous) — passing $e as the
@@ -1285,6 +1491,7 @@ class CRM_Core_Payment_Square extends CRM_Core_Payment {
     }
     catch (PaymentProcessorException $e) {
       // Square declined the card.
+      $this->reportDeclinedCard($e, __METHOD__);
       throw $e;
     }
     catch (\Throwable $e) {
@@ -1413,6 +1620,26 @@ class CRM_Core_Payment_Square extends CRM_Core_Payment {
   public function getWebhookSignatureKey() {
     // The test processor is its own row, with its own subject.
     return $this->_paymentProcessor['subject'] ?? NULL;
+  }
+
+  /**
+   * Use a new webhook signature key, once it is saved on the processor.
+   *
+   * @param string $key
+   *
+   * @see CRM_Square_Webhooks::fix()
+   */
+  public function setWebhookSignatureKey(string $key): void {
+    $this->_paymentProcessor['subject'] = $key;
+  }
+
+  /**
+   * Recovery of Square events whose webhooks never reached this processor.
+   *
+   * @return \CRM_Square_EventRecovery
+   */
+  public function eventRecovery(): CRM_Square_EventRecovery {
+    return new CRM_Square_EventRecovery($this, $this->gateway());
   }
 
   /**

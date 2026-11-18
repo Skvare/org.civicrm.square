@@ -53,7 +53,8 @@ class CRM_Square_Customers {
    * @param array $params
    *   CiviCRM payment parameters.
    *
-   * @return void
+   * @return bool
+   *   Whether Square accepted the update.
    */
   public function updateSquareCustomerDetails($customerID, $params) {
     $firstName = $params['first_name'] ?? NULL;
@@ -77,10 +78,44 @@ class CRM_Square_Customers {
 
     try {
       $this->gateway->call(fn (SquareClient $client) => $client->customers->update(new UpdateCustomerRequest($requestValues)));
+      return TRUE;
     }
     catch (CRM_Core_Exception $e) {
       Civi::log('square')->warning("Square: could not update the details of Square customer {$customerID}: " . $e->getMessage());
+      return FALSE;
     }
+  }
+
+  /**
+   * Bring a Square customer's name and email up to date with its CiviCRM contact.
+   *
+   * Square is only asked when they changed since this was last done.
+   *
+   * @param string $customerId
+   * @param int $contactId
+   * @param array $contact
+   *   The contact's first_name, last_name and (primary) email.
+   *
+   * @return bool
+   *   Whether Square was asked (and accepted).
+   */
+  public function syncFromContact(string $customerId, int $contactId, array $contact): bool {
+    $params = [
+      'first_name' => $contact['first_name'] ?? NULL,
+      'last_name' => $contact['last_name'] ?? NULL,
+      'email' => $contact['email'] ?? NULL,
+      'contact_id' => $contactId,
+    ];
+    $cacheKey = 'square_customer_sync_' . hash('sha256', $this->gateway->processorId() . ':' . $customerId);
+    $fingerprint = hash('sha256', json_encode($params));
+    if (Civi::cache('long')->get($cacheKey) === $fingerprint) {
+      return FALSE;
+    }
+    if (!$this->updateSquareCustomerDetails($customerId, $params)) {
+      return FALSE;
+    }
+    Civi::cache('long')->set($cacheKey, $fingerprint);
+    return TRUE;
   }
 
   /**

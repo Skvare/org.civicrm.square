@@ -43,6 +43,26 @@ class CRM_Core_Payment_SquareIPN {
   public const RETRY_WINDOW_SECONDS = 72 * 3600;
 
   /**
+   * Outcome of receiveEvent(): recorded and processed (whatever the result).
+   */
+  public const RECEIVED_PROCESSED = 'processed';
+
+  /**
+   * Outcome of receiveEvent(): already received, so not processed again.
+   */
+  public const RECEIVED_DUPLICATE = 'duplicate';
+
+  /**
+   * Outcome of receiveEvent(): an event type this extension does not handle.
+   */
+  public const RECEIVED_UNSUPPORTED = 'unsupported';
+
+  /**
+   * Outcome of receiveEvent(): the event cannot be recorded (no event_id).
+   */
+  public const RECEIVED_INVALID = 'invalid';
+
+  /**
    * Payment processor handling this webhook.
    *
    * @var CRM_Core_Payment_Square
@@ -147,18 +167,35 @@ class CRM_Core_Payment_SquareIPN {
    *   FALSE if it cannot be recorded.
    */
   public function onReceiveWebhook(array $payload): bool {
+    return $this->receiveEvent($payload) !== self::RECEIVED_INVALID;
+  }
+
+  /**
+   * Record and process one Square event, unless it was received before.
+   *
+   * Both webhooks and the events CRM_Square_EventRecovery fetches from
+   * Square's Events API come through here, so an event is processed once
+   * however it arrives.
+   *
+   * @param array $payload
+   *   Decoded event, as Square sends it in a webhook.
+   *
+   * @return string
+   *   One of the RECEIVED_* constants.
+   */
+  public function receiveEvent(array $payload): string {
     $eventId = $payload['event_id'] ?? NULL;
     $eventType = $payload['type'] ?? 'unknown';
 
     $this->event_id = $eventId;
     $this->event_type = $eventType;
 
-    CRM_Core_Payment_SquareDebugLogger::log("Square IPN: onReceiveWebhook() called. event_id={$eventId}, type={$eventType}, processor_id={$this->_paymentProcessor->getID()}");
+    CRM_Core_Payment_SquareDebugLogger::log("Square IPN: receiveEvent() called. event_id={$eventId}, type={$eventType}, processor_id={$this->_paymentProcessor->getID()}");
 
     // Ignore event types we do not handle (return 200 so Square does not retry).
     if (!in_array($eventType, self::getSupportedEventTypes(), TRUE)) {
       CRM_Core_Payment_SquareDebugLogger::log("Square IPN: ignoring unsupported event type '{$eventType}'.");
-      return TRUE;
+      return self::RECEIVED_UNSUPPORTED;
     }
 
     $this->setInputParameters($payload, $eventType);
@@ -167,7 +204,7 @@ class CRM_Core_Payment_SquareIPN {
 
     if (!$eventId) {
       Civi::log('square')->error('Square IPN: webhook event has no event_id.');
-      return FALSE;
+      return self::RECEIVED_INVALID;
     }
 
     // Guard the check-then-insert dedup below with a lock scoped to this
@@ -176,7 +213,7 @@ class CRM_Core_Payment_SquareIPN {
     $lock = $this->acquireDedupeLock("worker.square.webhook.{$processorId}.{$eventId}");
     if (!$lock) {
       CRM_Core_Payment_SquareDebugLogger::log("Square IPN: could not acquire dedup lock for event '{$eventId}', treating as in-flight duplicate.");
-      return TRUE;
+      return self::RECEIVED_DUPLICATE;
     }
 
     try {
@@ -185,7 +222,7 @@ class CRM_Core_Payment_SquareIPN {
       // 'error' row needs someone to look at it first.
       if ($this->findQueuedEvent($processorId, (string) $eventId)) {
         CRM_Core_Payment_SquareDebugLogger::log("Square IPN: duplicate event '{$eventId}' already queued, skipping.");
-        return TRUE;
+        return self::RECEIVED_DUPLICATE;
       }
 
       // Recorded in the default status 'new', so that if this request dies
@@ -207,7 +244,7 @@ class CRM_Core_Payment_SquareIPN {
     // Even if it fails: Square would redeliver it, only to be told it is a
     // duplicate.
     $this->processQueuedWebhookEvent($newWebhookEvent);
-    return TRUE;
+    return self::RECEIVED_PROCESSED;
   }
 
   /**

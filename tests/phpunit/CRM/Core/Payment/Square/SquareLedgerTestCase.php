@@ -724,6 +724,7 @@ abstract class CRM_Core_Payment_Square_SquareLedgerTestCase extends CRM_Core_Pay
     $client->invoices = $invoices;
     $client->orders = $orders;
     $client->subscriptions = $subscriptions;
+    $client->locations = $this->locationsClient();
     $config = $this->processorConfig($configOverrides + ['id' => self::PROCESSOR_ID]);
     return new CRM_Core_Payment_Square_FakeLedgerProcessor($config, $client);
   }

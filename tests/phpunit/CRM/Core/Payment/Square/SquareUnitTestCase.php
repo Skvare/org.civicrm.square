@@ -1,7 +1,10 @@
 <?php
 
 use PHPUnit\Framework\TestCase;
+use Square\Locations\LocationsClient;
 use Square\SquareClient;
+use Square\Types\GetLocationResponse;
+use Square\Types\Location;
 
 /**
  * Shared helpers for mocked-Square-client unit tests.
@@ -52,6 +55,11 @@ abstract class CRM_Core_Payment_Square_SquareUnitTestCase extends TestCase {
    */
   protected function processorWithMockClient(array $mockSubClients, array $configOverrides = []): CRM_Core_Payment_Square {
     $config = $this->processorConfig($configOverrides);
+
+    // Every checkout looks up the location's currency: a USD location
+    // unless the test mocks another, never one cached by an earlier test.
+    Civi::$cache = [];
+    $mockSubClients += ['locations' => $this->locationsClient()];
 
     $client = new SquareClient(token: 'test-token', options: ['baseUrl' => 'https://example.invalid']);
     foreach ($mockSubClients as $property => $mock) {
@@ -108,6 +116,29 @@ abstract class CRM_Core_Payment_Square_SquareUnitTestCase extends TestCase {
       }
 
     };
+  }
+
+  /**
+   * A mocked Locations API whose location takes the given currency.
+   *
+   * @param string $currency
+   * @param string $status
+   *
+   * @return \Square\Locations\LocationsClient&\PHPUnit\Framework\MockObject\MockObject
+   */
+  protected function locationsClient(string $currency = 'USD', string $status = 'ACTIVE') {
+    $locations = $this->createMock(LocationsClient::class);
+    $locations->method('get')->willReturn(new GetLocationResponse([
+      'location' => new Location([
+        'id' => 'location-id',
+        'name' => 'Main',
+        'status' => $status,
+        'currency' => $currency,
+        'timezone' => 'America/Chicago',
+        'merchantId' => 'merchant-id',
+      ]),
+    ]));
+    return $locations;
   }
 
   /**

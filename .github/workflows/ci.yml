@@ -27,7 +27,7 @@ jobs:
           composer validate --strict
           composer validate --strict --working-dir=tools
       - name: Lint
-        run: find CRM settings managed tests square.php -name '*.php' -print0 | xargs -0 -n1 php -l
+        run: find CRM api settings managed tests square.php -name '*.php' -print0 | xargs -0 -n1 php -l
       # PHPUnit and PHPCS live in tools/, never in the shipped vendor/.
       - name: Install development tools
         run: composer install --working-dir=tools --no-interaction --no-progress
@@ -141,7 +141,7 @@ jobs:
       - name: Install development tools
         run: composer install --working-dir=tools --no-interaction --no-progress
       - name: Coding standard
-        run: tools/vendor/bin/phpcs --standard=phpcs.xml.dist CRM square.php settings managed tests
+        run: tools/vendor/bin/phpcs --standard=phpcs.xml.dist CRM api square.php settings managed tests
 
   static-analysis:
     name: Static analysis (CiviCRM ${{ matrix.civicrm }})
