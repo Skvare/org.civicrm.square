@@ -175,6 +175,25 @@ class CRM_Core_Payment_Square_WebhookQueueTest extends CRM_Core_Payment_Square_S
     $this->assertSame(1, $this->handled);
   }
 
+  public function testLastOutcomeIsTheQueueRecordJustProcessed(): void {
+    $ipn = $this->ipn();
+    $this->assertNull($ipn->getLastOutcome());
+
+    $this->receive($ipn, $this->event());
+    $this->assertSame([
+      'id' => 1,
+      'status' => 'success',
+      'message' => 'Processed successfully',
+      'processed_date' => 'now',
+    ], $ipn->getLastOutcome());
+
+    $this->onPayment = fn () => throw new CRM_Core_Exception('needs manual reconciliation');
+    $record = $this->queued($ipn, date('Y-m-d H:i:s'));
+    $ipn->processQueuedWebhookEvent($record);
+    $this->assertSame('error', $ipn->getLastOutcome()['status']);
+    $this->assertSame($record['id'], $ipn->getLastOutcome()['id']);
+  }
+
   public function testEventWithoutAnIdIsRejected(): void {
     $ipn = $this->ipn();
     $payload = $this->event();

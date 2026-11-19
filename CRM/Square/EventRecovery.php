@@ -119,17 +119,50 @@ class CRM_Square_EventRecovery {
     if ($start === FALSE) {
       throw new CRM_Core_Exception("Cannot read the date '{$since}'.");
     }
-    // A minute's margin, so the oldest bound is not already out of range by
-    // the time Square reads it.
-    $start = max($start, $now - self::SEARCH_WINDOW_DAYS * 86400 + 60);
-    // Nothing from before search was enabled can be found.
-    $enabledSince = $this->getSearchEnabledSince();
-    if ($enabledSince !== NULL && strtotime($enabledSince) !== FALSE) {
-      $start = max($start, (int) strtotime($enabledSince));
+
+    foreach ($this->search($start, $now, $limit) as $json) {
+      $counts['found']++;
+      $outcome = $this->receive($json);
+      if ($outcome === CRM_Core_Payment_SquareIPN::RECEIVED_PROCESSED) {
+        $counts['processed']++;
+      }
+      elseif ($outcome === CRM_Core_Payment_SquareIPN::RECEIVED_DUPLICATE) {
+        $counts['duplicate']++;
+      }
+      else {
+        $counts['other']++;
+      }
     }
-    $end = $now - self::SETTLE_SECONDS;
+
+    if ($counts['processed']) {
+      Civi::log('square')->warning("Square: recovered {$counts['processed']} event(s) whose webhooks never reached payment processor {$this->gateway->processorId()}. Check its Square webhook subscription.");
+    }
+    return $counts;
+  }
+
+  /**
+   * The events, of the types CiviCRM handles, Square created in a time range.
+   *
+   * The range is narrowed to what Square can find: the last 28 days, since
+   * search was enabled, and not the last few minutes (see SETTLE_SECONDS).
+   *
+   * @param int $start
+   *   Unix timestamp.
+   * @param int $end
+   *   Unix timestamp.
+   * @param int $limit
+   *   The most events to return.
+   *
+   * @return string[]
+   *   Each event as Square would send it in a webhook (JSON), oldest first.
+   *
+   * @throws \CRM_Core_Exception
+   *   If Square cannot be searched.
+   */
+  public function search(int $start, int $end, int $limit): array {
+    [$start, $end] = $this->searchableRange($start, $end);
     if ($start >= $end || $limit <= 0) {
-      return $counts;
+      return [];
     }
 
     $request = new SearchEventsRequest([
@@ -147,33 +180,42 @@ class CRM_Square_EventRecovery {
       ]),
     ]);
 
+    $events = [];
     do {
       $response = $this->gateway->call(fn (SquareClient $client) => $client->events->searchEvents($request));
       foreach ($response->getEvents() ?? [] as $event) {
-        if ($counts['found'] >= $limit) {
+        if (count($events) >= $limit) {
           break 2;
         }
-        $counts['found']++;
-        $outcome = $this->receive($event->toJson());
-        if ($outcome === CRM_Core_Payment_SquareIPN::RECEIVED_PROCESSED) {
-          $counts['processed']++;
-        }
-        elseif ($outcome === CRM_Core_Payment_SquareIPN::RECEIVED_DUPLICATE) {
-          $counts['duplicate']++;
-        }
-        else {
-          $counts['other']++;
-        }
+        $events[] = $event->toJson();
       }
       $cursor = $response->getCursor();
       // Later pages need the original query, with the cursor.
       $request->setCursor($cursor);
     } while (!empty($cursor));
+    return $events;
+  }
 
-    if ($counts['processed']) {
-      Civi::log('square')->warning("Square: recovered {$counts['processed']} event(s) whose webhooks never reached payment processor {$this->gateway->processorId()}. Check its Square webhook subscription.");
+  /**
+   * Narrow a time range to the part Square can search.
+   *
+   * @param int $start
+   * @param int $end
+   *
+   * @return int[]
+   *   [start, end], as Unix timestamps.
+   */
+  protected function searchableRange(int $start, int $end): array {
+    $now = $this->now();
+    // A minute's margin, so the oldest bound is not already out of range by
+    // the time Square reads it.
+    $start = max($start, $now - self::SEARCH_WINDOW_DAYS * 86400 + 60);
+    // Nothing from before search was enabled can be found.
+    $enabledSince = $this->getSearchEnabledSince();
+    if ($enabledSince !== NULL && strtotime($enabledSince) !== FALSE) {
+      $start = max($start, (int) strtotime($enabledSince));
     }
-    return $counts;
+    return [$start, min($end, $now - self::SETTLE_SECONDS)];
   }
 
   /**

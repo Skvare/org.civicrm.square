@@ -31,6 +31,26 @@ parameters:
 			path: CRM/Square/Form/Settings.php
 
 		-
+			message: "#^Call to an undefined method CRM_Square_Form_Reconcile\\:\\:addFormRule\\(\\)\\.$#"
+			count: 1
+			path: CRM/Square/Form/Reconcile.php
+
+		-
+			message: "#^Call to an undefined method CRM_Square_Form_Reconcile\\:\\:getButtonName\\(\\)\\.$#"
+			count: 4
+			path: CRM/Square/Form/Reconcile.php
+
+		-
+			message: "#^Call to an undefined method CRM_Square_Form_Reconcile\\:\\:getSubmitValue\\(\\)\\.$#"
+			count: 3
+			path: CRM/Square/Form/Reconcile.php
+
+		-
+			message: "#^Call to an undefined method CRM_Square_Form_Reconcile\\:\\:isSubmitted\\(\\)\\.$#"
+			count: 2
+			path: CRM/Square/Form/Reconcile.php
+
+		-
 			message: "#^Call to an undefined method CRM_Square_Form_Webhooks\\:\\:exportValues\\(\\)\\.$#"
 			count: 1
 			path: CRM/Square/Form/Webhooks.php

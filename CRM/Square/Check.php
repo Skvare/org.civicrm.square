@@ -233,10 +233,14 @@ class CRM_Square_Check {
       ->execute()
       ->countMatched();
     if ($errorCount) {
-      $this->add('square_webhook_errors', E::ts('%1 Square webhook(s) from the last %2 days could not be processed, so CiviCRM may be missing payments, installments or refunds that Square recorded. Each record\'s message says why. Once the cause is fixed, use the queue\'s Retry action.', [
+      $message = $this->add('square_webhook_errors', E::ts('%1 Square webhook(s) from the last %2 days could not be processed, so CiviCRM may be missing payments, installments or refunds that Square recorded. Each record\'s message says why. Once the cause is fixed, use the queue\'s Retry action.', [
         1 => $errorCount,
         2 => self::WEBHOOK_ERROR_DAYS,
       ]), E::ts('Square: Webhooks Failed'), LogLevel::WARNING, 'fa-plug', $queueLink);
+      $message->addAction(E::ts('Square Reconciliation'), FALSE, 'href', [
+        'path' => 'civicrm/admin/square/reconcile',
+        'query' => ['reset' => 1],
+      ]);
     }
 
     $stuckCount = PaymentprocessorWebhook::get(FALSE)
@@ -291,14 +295,17 @@ class CRM_Square_Check {
    * @param string $icon
    * @param array|null $action
    *   A link to fix it, as [title, path, query].
+   *
+   * @return \CRM_Utils_Check_Message
    */
-  protected function add(string $name, string $message, string $title, string $level, string $icon, ?array $action = NULL): void {
+  protected function add(string $name, string $message, string $title, string $level, string $icon, ?array $action = NULL): CRM_Utils_Check_Message {
     $checkMessage = new CRM_Utils_Check_Message($name, $message, $title, $level, $icon);
     if ($action) {
       [$actionTitle, $path, $query] = $action;
       $checkMessage->addAction($actionTitle, FALSE, 'href', ['path' => $path, 'query' => $query]);
     }
     $this->messages[] = $checkMessage;
+    return $checkMessage;
   }
 
 }

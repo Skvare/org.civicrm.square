@@ -8,6 +8,13 @@
     <is_public>false</is_public>
   </item>
   <item>
+    <path>civicrm/admin/square/reconcile</path>
+    <page_callback>CRM_Square_Form_Reconcile</page_callback>
+    <access_arguments>administer CiviCRM</access_arguments>
+    <title>Square Reconciliation</title>
+    <is_public>false</is_public>
+  </item>
+  <item>
     <path>civicrm/admin/square/webhook</path>
     <page_callback>CRM_Square_Form_Webhooks</page_callback>
     <access_arguments>administer CiviCRM</access_arguments>

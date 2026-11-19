@@ -128,8 +128,8 @@ function square_civicrm_check(&$messages, $statusNames = [], $includeDisabled = 
 /**
  * Implements hook_civicrm_navigationMenu().
  *
- * Adds "Square Settings" and "Square Webhooks" under Administer > System
- * Settings.
+ * Adds "Square Settings", "Square Webhooks" and "Square Reconciliation"
+ * under Administer > System Settings.
  */
 function square_civicrm_navigationMenu(&$menu): void {
   _square_civix_insert_navigation_menu($menu, 'Administer/System Settings', [
@@ -144,6 +144,14 @@ function square_civicrm_navigationMenu(&$menu): void {
     'label' => \CRM_Square_ExtensionUtil::ts('Square Webhooks'),
     'name' => 'square_webhooks',
     'url' => 'civicrm/admin/square/webhook?reset=1',
+    'permission' => 'administer CiviCRM',
+    'operator' => 'OR',
+    'separator' => 0,
+  ]);
+  _square_civix_insert_navigation_menu($menu, 'Administer/System Settings', [
+    'label' => \CRM_Square_ExtensionUtil::ts('Square Reconciliation'),
+    'name' => 'square_reconcile',
+    'url' => 'civicrm/admin/square/reconcile?reset=1',
     'permission' => 'administer CiviCRM',
     'operator' => 'OR',
     'separator' => 0,

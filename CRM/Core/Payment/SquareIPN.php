@@ -112,6 +112,13 @@ class CRM_Core_Payment_SquareIPN {
   protected $payment_id = NULL;
 
   /**
+   * The outcome of the last event processed (see getLastOutcome()).
+   *
+   * @var array|null
+   */
+  protected ?array $lastOutcome = NULL;
+
+  /**
    * The data provided by the IPN.
    *
    * @var array|Object|string
@@ -316,8 +323,20 @@ class CRM_Core_Payment_SquareIPN {
       $values['processed_date'] = 'now';
     }
     $this->updateQueueRecord((int) $webhookEvent['id'], $values);
+    $this->lastOutcome = ['id' => (int) $webhookEvent['id']] + $values;
 
     return $status !== 'error';
+  }
+
+  /**
+   * The queue record the last processQueuedWebhookEvent() call left.
+   *
+   * @return array|null
+   *   id, status (success, new or error) and message; NULL if nothing has
+   *   been processed.
+   */
+  public function getLastOutcome(): ?array {
+    return $this->lastOutcome;
   }
 
   /**

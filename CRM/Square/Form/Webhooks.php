@@ -87,7 +87,8 @@ class CRM_Square_Form_Webhooks extends CRM_Core_Form {
         CRM_Core_Session::setStatus(htmlspecialchars($e->getMessage()), E::ts('%1: webhook not updated', [1 => $label]), 'error');
       }
     }
-    CRM_Core_Session::singleton()->pushUserContext(CRM_Utils_System::url('civicrm/admin/square/webhook', 'reset=1'));
+    // Reload, so the page shows the webhooks as they are now.
+    CRM_Utils_System::redirect(CRM_Utils_System::url('civicrm/admin/square/webhook', 'reset=1', FALSE, NULL, FALSE));
   }
 
 }

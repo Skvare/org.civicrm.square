@@ -39,6 +39,7 @@ required after cloning/downloading — just enable the extension as usual
 - A payment in a currency the processor's Square location does not take is refused with a clear message before Square is asked
 - Webhook subscriptions created and repaired from CiviCRM (**Administer → System Settings → Square Webhooks**), including their signature keys
 - Recovery of webhooks Square never delivered, from Square's Events API (hourly scheduled job, `Square.recoverevents`)
+- Reconciliation page (**Administer → System Settings → Square Reconciliation**): look up a subscription and its installments, a payment or refund, payments or refunds in a date range, or recent events; see which CiviCRM recorded and what the webhook queue holds for each; process the missing ones from Square's current data, or retry failed queue records
 - System Status checks: configuration, credentials, location and currency, webhook subscription, failed or stuck webhooks, mjwshared version, card-testing protection
 - Card-testing protection: a minimum card payment amount for public forms, and declined cards reported to the Firewall extension when it is installed
 - Optional card statement description for one-time payments
@@ -190,7 +191,7 @@ The card form's ZIP/postal code and the billing address's (`billing_postal_code-
 | `hook_civicrm_install` | Standard civix install (schema/table creation is handled separately by `CRM_Square_Upgrader`, not this hook) |
 | `hook_civicrm_enable` | Enforces `billing_mode = 1` on all Square payment processor instances |
 | `hook_civicrm_managed` | Wires up `managed/PaymentProcessorType.mgd.php` (registers the Square payment processor type) |
-| `hook_civicrm_navigationMenu` | Adds "Square Settings" and "Square Webhooks" under Administer → System Settings |
+| `hook_civicrm_navigationMenu` | Adds "Square Settings", "Square Webhooks" and "Square Reconciliation" under Administer → System Settings |
 | `hook_civicrm_merge` | Moves the merged-away contact's Square customer mappings to the contact kept |
 | `hook_civicrm_post` | Queues contacts whose name or email changed, to update their Square customers |
 | `hook_civicrm_check` | System Status checks (`CRM_Square_Check`) |
@@ -235,6 +236,8 @@ CRM/
     Processors.php           The active Square processors
     Form/Settings.php        Administer > System Settings > Square Settings (debug logging, external payment import, minimum amount, statement description)
     Form/Webhooks.php        Administer > System Settings > Square Webhooks
+    Reconciliation.php       Compares Square's records with CiviCRM's; processes what CiviCRM missed
+    Form/Reconcile.php       Administer > System Settings > Square Reconciliation
     Upgrader.php             Creates/drops the square_customer_map and square_catalog_map tables (see Database Tables)
 js/
   square.js                  Browser-side Square Web Payments SDK integration
@@ -249,7 +252,8 @@ templates/
   CRM/Core/Payment/Square/Card.tpl  Card container HTML injected into billing block
   CRM/Square/Form/Settings.tpl      Settings form markup
   CRM/Square/Form/Webhooks.tpl      Square Webhooks page markup
-xml/Menu/square.xml          Routes: civicrm/admin/setting/square, civicrm/admin/square/webhook
+  CRM/Square/Form/Reconcile.tpl     Square Reconciliation page markup
+xml/Menu/square.xml          Routes: civicrm/admin/setting/square, civicrm/admin/square/webhook, civicrm/admin/square/reconcile
 square.php                   Extension bootstrap and hooks (config/install/enable/merge/post/check/navigationMenu)
 tools/composer.json          Development tools (PHPUnit, PHPCS); never shipped (see docs/DEVELOPMENT.md)
 ```
@@ -300,6 +304,7 @@ the CiviCRM log when reconciliation does not occur.
 |---|---|
 | Webhook returns HTTP 401 | Verify the processor's Webhook Signature Key and the exact notification URL in Square (**Square Webhooks** shows the URL CiviCRM expects, and can generate a new key). Do not trim or transform the raw request body. |
 | An event never reached CiviCRM | The hourly **Square: recover missed webhook events** job fetches it from Square (once event search is enabled); run `Square.recoverevents` to do it now. |
+| A payment, installment or refund is missing in CiviCRM | Look it up on **Square Reconciliation** (by subscription, recurring contribution, Square ID or date) and process it from there. |
 | Webhook returns HTTP 400 | Verify Square is posting valid JSON with an `event_id`. |
 | No change after a webhook | Confirm the event type is supported, the processor ID in the URL is correct, and the queue record is not in an error state. |
 | Repeated webhook delivery | Square retries deliveries that did not succeed: check for HTTP 401 or 400 above. An event that is recorded is acknowledged even if processing it fails; resolve the queue record's logged error instead. |

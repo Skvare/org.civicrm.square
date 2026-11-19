@@ -1643,6 +1643,15 @@ class CRM_Core_Payment_Square extends CRM_Core_Payment {
   }
 
   /**
+   * Comparison of Square's records with CiviCRM's, and processing of what CiviCRM missed.
+   *
+   * @return \CRM_Square_Reconciliation
+   */
+  public function reconciliation(): CRM_Square_Reconciliation {
+    return new CRM_Square_Reconciliation($this, $this->gateway());
+  }
+
+  /**
    * Handle invoice paid from Square webhook.
    *
    * @param array $payload

@@ -153,6 +153,46 @@ skipped. It records a warning in the CiviCRM log when it recovers anything.
 - It does not reprocess events whose queue record is in `error`: fix the cause
   and use the webhook queue's **Retry** action for those.
 
+## Reconciliation
+
+**Administer → System Settings → Square Reconciliation** compares what Square
+recorded with what CiviCRM recorded, for one processor, and processes what
+CiviCRM missed. Square cannot be asked to send a webhook again (it retries a
+failed delivery for 24 hours, then discards it), so the page processes records
+itself. Look up:
+
+- **a subscription and its installments**, by Square subscription ID or by the
+  ID of the recurring contribution linked to it: the subscription, then each of
+  its invoices (newest first) with the payment that paid it;
+- **a Square payment or refund**, by its ID;
+- **payments or refunds in a date range**, at the processor's Square location;
+- **Square events in a date range**, from the Events API (last 28 days, and
+  only once event search is enabled).
+
+For each, the page shows Square's amount and status, whether CiviCRM recorded it
+(with a link to the contribution or recurring contribution, or the amount
+CiviCRM recorded if it differs), and the latest webhook queue record about it:
+its status and message, or "never received". At most 200 are shown at once.
+
+Select records and:
+
+- **Process selected** turns each into the webhook Square would have sent,
+  from Square's current data (`payment.updated`, `refund.updated`,
+  `invoice.payment_made` for a paid installment, `subscription.updated` to
+  sync a subscription's status), or for an event, the event itself, and
+  processes it exactly as a webhook: in the webhook queue, as a record whose
+  event ID starts `civicrm-reconcile-`, with the same checks. A payment already
+  recorded is never recorded again, and an amount that differs from CiviCRM's is
+  reported, not changed. Records CiviCRM already recorded, unpaid invoices,
+  refunds Square has not completed, payments at other locations, and events
+  CiviCRM already received cannot be selected for this.
+- **Retry selected webhook queue records** processes again, now, the queue
+  records that failed or are waiting, as the queue's own **Retry** action
+  does (without waiting for cron), once the cause of the failure is fixed.
+
+The page then shows the search again, with the outcome. The search is in the
+page's URL, so it can be reloaded or shared with another administrator.
+
 ## System Status checks
 
 **Administer → Administration Console → System Status** reports, for the
